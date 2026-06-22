@@ -4,6 +4,9 @@
   "private": false,
   "description": "A local 3D graph and ask interface for Obsidian markdown vaults.",
   "type": "module",
+  "bin": {
+    "second-brain-ui": "./server.js"
+  },
   "scripts": {
     "start": "node server.js"
   }

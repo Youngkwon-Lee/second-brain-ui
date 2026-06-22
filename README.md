@@ -50,6 +50,27 @@ Then open:
 http://localhost:4177
 ```
 
+## CLI
+
+After cloning locally, you can also link the command:
+
+```bash
+npm link
+OBSIDIAN_VAULT="/path/to/your/vault" second-brain-ui
+```
+
+## How It Works
+
+Second Brain UI scans local `.md` files, extracts note titles, tags, wiki links, markdown links, backlinks, and top-level folders, then builds a browser-based 3D graph.
+
+The Ask interface uses local retrieval over markdown body chunks. It returns a short vault-grounded answer with source notes and excerpts. No hosted AI API is called by default.
+
+## Privacy
+
+This repository should contain only the app code. Do not commit your Obsidian vault, `.env`, screenshots with private note titles, or exported personal data.
+
+`.env` is ignored by git so each user can keep their local vault path private.
+
 ## Notes
 
 - This is a local-first tool. It does not upload your vault.
