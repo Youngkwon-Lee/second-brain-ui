@@ -175,6 +175,20 @@ async function buildVault() {
     updatedAt: note.updatedAt,
     degree: edges.filter((edge) => edge.source === note.id || edge.target === note.id).length
   }));
+  const degreeById = new Map(nodes.map((node) => [node.id, node.degree || 0]));
+  const searchChunks = notes.flatMap((note) =>
+    chunksForNote(note).map((chunk) => ({
+      id: note.id,
+      path: note.path,
+      title: note.title,
+      tags: note.tags,
+      group: (note.path || note.id).split("/")[0] || "root",
+      degree: degreeById.get(note.id) || 0,
+      heading: chunk.heading,
+      text: chunk.text,
+      snippet: chunk.snippet
+    }))
+  );
 
   return {
     vaultRoot,
@@ -191,6 +205,7 @@ async function buildVault() {
       .map(([tag, count]) => ({ tag, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 80),
+    searchChunks,
     fullNotes: notes,
     notes: notes
       .map(({ content, ...note }) => note)
@@ -234,25 +249,22 @@ function askVault(vault, query) {
   const tokens = tokenizeQuery(query);
   if (!tokens.length) return { query, total: 0, results: [] };
 
-  const degreeById = new Map(vault.nodes.map((node) => [node.id, node.degree || 0]));
   const chunkMatches = [];
-  for (const note of vault.fullNotes || []) {
-    for (const chunk of chunksForNote(note)) {
-      const score = scoreChunk(note, chunk, tokens, query) + Math.min(4, (degreeById.get(note.id) || 0) / 10);
-      if (score <= 0) continue;
-      chunkMatches.push({
-        id: note.id,
-        path: note.path,
-        title: note.title,
-        preview: chunk.snippet,
-        excerpt: chunk.snippet,
-        heading: chunk.heading,
-        tags: note.tags,
-        degree: degreeById.get(note.id) || 0,
-        group: (note.path || note.id).split("/")[0] || "root",
-        score
-      });
-    }
+  for (const chunk of vault.searchChunks || []) {
+    const score = scoreChunk(chunk, chunk, tokens, query) + Math.min(4, (chunk.degree || 0) / 10);
+    if (score <= 0) continue;
+    chunkMatches.push({
+      id: chunk.id,
+      path: chunk.path,
+      title: chunk.title,
+      preview: chunk.snippet,
+      excerpt: chunk.snippet,
+      heading: chunk.heading,
+      tags: chunk.tags,
+      degree: chunk.degree,
+      group: chunk.group,
+      score
+    });
   }
 
   const results = dedupeChunkMatches(chunkMatches)
