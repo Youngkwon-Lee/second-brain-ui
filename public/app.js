@@ -19,6 +19,7 @@ const state = {
   sceneRotationPausedUntil: 0,
   hoverClearTimer: null,
   activeGroup: null,
+  activeView: "linked",
   askResults: [],
   askMode: false
 };
@@ -35,6 +36,12 @@ const groupColors = {
   root: "#f1f1f5"
 };
 const fallbackGroupColors = ["#8b5cf6", "#4ea8ff", "#54d18a", "#f6b44b", "#ff5c7a", "#bfb8ff", "#5eead4", "#f472b6"];
+const graphViews = [
+  { id: "linked", label: "linked" },
+  { id: "hubs", label: "hubs" },
+  { id: "recent", label: "recent" },
+  { id: "isolated", label: "isolated" }
+];
 
 async function fetchJson(url) {
   const res = await fetch(`${apiBase}${url}`);
@@ -110,19 +117,23 @@ function renderSidebar() {
 
   const graphHud = document.getElementById("graphHud");
   graphHud.innerHTML = "";
-  const countChip = document.createElement("button");
-  countChip.className = `chip${state.activeGroup === null ? " active" : ""}`;
   const linkedCount = graph.nodes.filter((node) => node.degree > 0).length;
-  countChip.innerHTML = `<span class="dot"></span>${linkedCount.toLocaleString()} linked / ${graph.stats.notes.toLocaleString()} notes`;
-  countChip.addEventListener("click", () => applyGraphGroupFilter(null));
+  const countChip = createHudChip(`${linkedCount.toLocaleString()} linked / ${graph.stats.notes.toLocaleString()} notes`, state.activeView === "linked" && state.activeGroup === null, () => applyGraphFilter({ view: "linked", group: null }));
   graphHud.appendChild(countChip);
-  for (const { label, color } of availableGroups(graph).slice(0, 7)) {
-    const chip = document.createElement("button");
-    chip.className = `chip${state.activeGroup === label ? " active" : ""}`;
-    chip.innerHTML = `<span class="dot" style="background:${color}"></span>${label}`;
-    chip.addEventListener("click", () => applyGraphGroupFilter(state.activeGroup === label ? null : label));
-    graphHud.appendChild(chip);
+  for (const view of graphViews.slice(1)) {
+    graphHud.appendChild(createHudChip(view.label, state.activeView === view.id, () => applyGraphFilter({ view: view.id })));
   }
+  for (const { label, color } of availableGroups(graph).slice(0, 7)) {
+    graphHud.appendChild(createHudChip(label, state.activeGroup === label, () => applyGraphFilter({ group: state.activeGroup === label ? null : label }), color));
+  }
+}
+
+function createHudChip(label, active, onClick, color = null) {
+  const chip = document.createElement("button");
+  chip.className = `chip${active ? " active" : ""}`;
+  chip.innerHTML = `<span class="dot"${color ? ` style="background:${color}"` : ""}></span>${escapeHtml(label)}`;
+  chip.addEventListener("click", onClick);
+  return chip;
 }
 
 function availableGroups(graph) {
@@ -146,15 +157,15 @@ function graphDataFromVault(graph) {
   const linkedNodes = graph.nodes.filter((node) => node.degree > 0);
   const linkedIds = new Set(linkedNodes.map((node) => node.id));
   const linkedEdges = graph.edges.filter((edge) => linkedIds.has(edge.source) && linkedIds.has(edge.target));
-  const visibleIds = largestComponentIds(linkedNodes, linkedEdges);
+  const visibleIds = idsForActiveView(graph, linkedNodes, linkedEdges);
   const groupFilteredIds = new Set(
-    linkedNodes
+    graph.nodes
       .filter((node) => visibleIds.has(node.id))
       .filter((node) => !state.activeGroup || groupForNode(node) === state.activeGroup)
       .map((node) => node.id)
   );
   return {
-    nodes: linkedNodes.filter((node) => groupFilteredIds.has(node.id)).map((node) => ({
+    nodes: graph.nodes.filter((node) => groupFilteredIds.has(node.id)).map((node) => ({
       ...node,
       color: colorForNode(node),
       val: radiusForNode(node),
@@ -172,7 +183,36 @@ function graphDataFromVault(graph) {
   };
 }
 
-function applyGraphGroupFilter(group) {
+function idsForActiveView(graph, linkedNodes, linkedEdges) {
+  if (state.activeView === "isolated") {
+    return new Set(graph.nodes.filter((node) => node.degree === 0).map((node) => node.id));
+  }
+  if (state.activeView === "recent") {
+    return new Set(
+      linkedNodes
+        .slice()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 160)
+        .map((node) => node.id)
+    );
+  }
+  if (state.activeView === "hubs") {
+    const sorted = linkedNodes.slice().sort((a, b) => b.degree - a.degree);
+    const hubIds = new Set(sorted.slice(0, 45).map((node) => node.id));
+    for (const edge of linkedEdges) {
+      if (hubIds.has(edge.source) || hubIds.has(edge.target)) {
+        hubIds.add(edge.source);
+        hubIds.add(edge.target);
+      }
+      if (hubIds.size > 180) break;
+    }
+    return hubIds;
+  }
+  return largestComponentIds(linkedNodes, linkedEdges);
+}
+
+function applyGraphFilter({ view = state.activeView, group = state.activeGroup } = {}) {
+  state.activeView = view;
   state.activeGroup = group;
   state.hovered = null;
   updateHoverCard(null);
@@ -181,11 +221,16 @@ function applyGraphGroupFilter(group) {
     renderSidebar();
     const firstNode = state.forceGraph?.graphData().nodes[0];
     if (firstNode) {
-      renderNodePreview(firstNode, group ? `${group} 필터` : "전체 연결 그래프");
+      renderNodePreview(firstNode, labelForCurrentGraph());
     } else {
-      renderEmptyPreview(group);
+      renderEmptyPreview(labelForCurrentGraph());
     }
   }
+}
+
+function labelForCurrentGraph() {
+  const view = graphViews.find((item) => item.id === state.activeView)?.label || state.activeView;
+  return state.activeGroup ? `${view} · ${state.activeGroup}` : view;
 }
 
 function seededPhase(value) {
@@ -596,9 +641,17 @@ document.getElementById("askInput").addEventListener("keydown", async (event) =>
 });
 document.getElementById("refresh").addEventListener("click", () => load());
 document.getElementById("openObsidian").addEventListener("click", () => {
-  const vaultPath = state.graph?.vaultRoot || "";
-  if (vaultPath) location.href = `obsidian://open?path=${encodeURIComponent(vaultPath)}`;
+  openInObsidian(state.graph?.vaultRoot);
 });
+document.getElementById("openSelectedNote").addEventListener("click", () => {
+  if (!state.graph?.vaultRoot || !state.selected?.id) return;
+  openInObsidian(`${state.graph.vaultRoot}/${state.selected.id}.md`);
+});
+
+function openInObsidian(path) {
+  if (path) location.href = `obsidian://open?path=${encodeURIComponent(path)}`;
+}
+
 graphEl.addEventListener("mousemove", (event) => {
   const nearest = nearestNodeFromPointer(event);
   if (nearest !== state.hovered) setHoveredNode(nearest);

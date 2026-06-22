@@ -432,6 +432,27 @@ button, input { font: inherit; }
   white-space: pre-line;
 }
 
+.note-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.mini-button {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mini-button:hover {
+  border-color: rgba(139, 92, 246, 0.5);
+  color: var(--text);
+}
+
 .graph-hud {
   position: absolute;
   left: 24px;
