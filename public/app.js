@@ -38,6 +38,7 @@ const groupColors = {
 const fallbackGroupColors = ["#8b5cf6", "#4ea8ff", "#54d18a", "#f6b44b", "#ff5c7a", "#bfb8ff", "#5eead4", "#f472b6"];
 const graphViews = [
   { id: "linked", label: "linked" },
+  { id: "perspective", label: "perspective" },
   { id: "hubs", label: "hubs" },
   { id: "recent", label: "recent" },
   { id: "isolated", label: "isolated" }
@@ -186,6 +187,24 @@ function graphDataFromVault(graph) {
 function idsForActiveView(graph, linkedNodes, linkedEdges) {
   if (state.activeView === "isolated") {
     return new Set(graph.nodes.filter((node) => node.degree === 0).map((node) => node.id));
+  }
+  if (state.activeView === "perspective") {
+    const perspectiveIds = new Set(
+      graph.nodes
+        .filter((node) => perspectiveScore(node) >= 26)
+        .sort((a, b) => perspectiveScore(b) - perspectiveScore(a))
+        .slice(0, 90)
+        .map((node) => node.id)
+    );
+    for (const edge of linkedEdges) {
+      if (perspectiveIds.has(edge.source) || perspectiveIds.has(edge.target)) {
+        const source = graph.nodes.find((node) => node.id === edge.source);
+        const target = graph.nodes.find((node) => node.id === edge.target);
+        if (source && perspectiveScore(source) >= 16) perspectiveIds.add(edge.source);
+        if (target && perspectiveScore(target) >= 16) perspectiveIds.add(edge.target);
+      }
+    }
+    return perspectiveIds;
   }
   if (state.activeView === "recent") {
     return new Set(
@@ -408,8 +427,8 @@ function updateMajorLabels() {
   const canvas = graphEl.querySelector("canvas");
   if (!canvas) return;
   const labels = state.forceGraph.graphData().nodes
-    .filter((node) => majorLabelScore(node) >= 18 && Number.isFinite(node.x) && Number.isFinite(node.y) && Number.isFinite(node.z))
-    .sort((a, b) => majorLabelScore(b) - majorLabelScore(a))
+    .filter((node) => labelScoreForNode(node) >= 18 && Number.isFinite(node.x) && Number.isFinite(node.y) && Number.isFinite(node.z))
+    .sort((a, b) => labelScoreForNode(b) - labelScoreForNode(a))
     .slice(0, 14);
 
   majorLabels.innerHTML = "";
@@ -429,6 +448,10 @@ function updateMajorLabels() {
   }
 }
 
+function labelScoreForNode(node) {
+  return state.activeView === "perspective" ? perspectiveScore(node) : majorLabelScore(node);
+}
+
 function majorLabelScore(node) {
   const title = (node.title || "").toLowerCase();
   const pathText = (node.path || node.id || "").toLowerCase();
@@ -445,6 +468,30 @@ function majorLabelScore(node) {
   if (/(google drive|drive|operation|ops|inventory|prompt inventory|full pass|triage|handoff|log|runbook|workflow evidence|daily|meeting|scratch)/i.test(`${title} ${pathText}`)) score -= 30;
   if (title.length > 72) score -= 8;
 
+  return score;
+}
+
+function perspectiveScore(node) {
+  const title = (node.title || "").toLowerCase();
+  const pathText = (node.path || node.id || "").toLowerCase();
+  const combined = `${title} ${pathText}`;
+  const group = groupForNode(node);
+  let score = 0;
+
+  if (group === "personal") score += 28;
+  if (group === "company") score += 24;
+  if (group === "research") score += 12;
+  if (group === "operations") score += 4;
+  if (["projects", "_inbox", "_templates", "candidates"].includes(group)) score -= 10;
+
+  if (/(identity|philosophy|principle|decision|operating-system|north-star|thesis|vision|strategy|priority|priorities|belief|taste|self-model|mission|values)/i.test(combined)) score += 28;
+  if (/(정체성|철학|원칙|판단|의사결정|비전|전략|가설|관점|생각|세계관|미션|가치|우선순위|방향)/.test(combined)) score += 28;
+  if (/(current-research-priorities|human-state-infrastructure|clinical-ai-copilot|ai-native-company-principles|current-thesis|personal-operating-system|decision-patterns|identity-and-philosophy|north-star-alignment)/i.test(combined)) score += 26;
+  if (/(readme|index|catalog|registry|lineage|queue|map)$/i.test(title) || /(\/readme|\/index|catalog|registry|lineage|queue)/i.test(pathText)) score -= 14;
+  if (/(research\/literature|research\/papers|papers\/|literature\/)/i.test(pathText) || /_[a-z-]+_\d{4}$/i.test(title)) score -= 34;
+  if (/(google drive|drive|operation|ops|inventory|full pass|triage|handoff|log|runbook|workflow|meeting|scratch|template|checklist)/i.test(combined)) score -= 30;
+
+  score += Math.min(10, (node.degree || 0) * 0.25);
   return score;
 }
 
