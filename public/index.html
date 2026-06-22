@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Second Brain Vault</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <nav class="rail" aria-label="주요 도구">
+      <button class="active" title="그래프" data-view="graph">⌘</button>
+      <button title="파일">□</button>
+      <button title="검색">⌕</button>
+      <button title="캘린더">◷</button>
+      <div class="spacer"></div>
+      <button title="설정">⚙</button>
+    </nav>
+
+    <aside class="sidebar">
+      <div class="panel-head">
+        <div>
+          <div class="title">Second Brain</div>
+          <div class="caption" id="vaultPath">vault 연결 중</div>
+        </div>
+        <button class="icon-button" id="refresh" title="새로고침">↻</button>
+      </div>
+      <label class="search">
+        <span>⌕</span>
+        <input id="searchInput" placeholder="노트, 태그, 링크 검색" />
+      </label>
+      <div class="section">
+        <div class="section-label">Overview</div>
+        <div class="stat-line"><span>Notes</span><strong id="statNotes">0</strong></div>
+        <div class="stat-line"><span>Edges</span><strong id="statEdges">0</strong></div>
+        <div class="stat-line"><span>Tags</span><strong id="statTags">0</strong></div>
+      </div>
+      <div class="section">
+        <div class="section-label">Recent Notes</div>
+        <div id="noteList" class="note-list"></div>
+      </div>
+      <div class="section tags-section">
+        <div class="section-label">Tags</div>
+        <div id="tagList" class="tag-list"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <label class="query" for="askInput">
+          <span>◇</span>
+          <span><strong>Ask your vault</strong> · 실제 Obsidian markdown 그래프</span>
+          <input id="askInput" placeholder="vault에 질문하기" autocomplete="off" />
+          <span id="askStatus" class="ask-status">ready</span>
+        </label>
+        <button class="icon-button" id="openObsidian" title="Obsidian 열기">↗</button>
+      </div>
+      <div id="graph"></div>
+      <article class="note-pane" id="notePane">
+        <div class="caption">선택된 노트</div>
+        <h1 id="noteTitle">로딩 중</h1>
+        <p id="notePreview">vault를 읽고 있습니다.</p>
+        <div class="tag-row" id="noteTags"></div>
+      </article>
+      <div class="graph-hud" id="graphHud"></div>
+    </main>
+
+    <aside class="rightbar">
+      <div class="panel-head">
+        <div class="title">Graph Context</div>
+        <button class="icon-button" title="패널 접기">‹</button>
+      </div>
+      <div class="right-content">
+        <div class="section-label">Selected Note</div>
+        <div class="property"><span>Path</span><strong id="selectedPath">-</strong></div>
+        <div class="property"><span>Degree</span><strong id="selectedDegree">-</strong></div>
+        <div class="section-label">Backlinks</div>
+        <div id="backlinks"></div>
+        <div class="section-label">Markdown Preview</div>
+        <pre id="markdownPreview"></pre>
+      </div>
+    </aside>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/3d-force-graph"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

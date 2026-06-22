@@ -1,0 +1,10 @@
+{
+  "name": "second-brain-ui",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A local 3D graph and ask interface for Obsidian markdown vaults.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
