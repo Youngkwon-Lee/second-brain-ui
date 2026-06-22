@@ -66,7 +66,38 @@ function stripFrontmatter(text) {
   return end === -1 ? text : text.slice(end + 4);
 }
 
+function extractFrontmatter(text) {
+  if (!text.startsWith("---")) return {};
+  const end = text.indexOf("\n---", 3);
+  if (end === -1) return {};
+  const body = text.slice(3, end).trim();
+  const data = {};
+  let currentKey = null;
+  for (const line of body.split(/\r?\n/)) {
+    if (/^\s+-\s+/.test(line) && currentKey) {
+      if (!Array.isArray(data[currentKey])) data[currentKey] = [];
+      data[currentKey].push(parseFrontmatterValue(line.replace(/^\s+-\s+/, "")));
+      continue;
+    }
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) continue;
+    currentKey = match[1];
+    const value = match[2].trim();
+    data[currentKey] = value ? parseFrontmatterValue(value) : [];
+  }
+  return data;
+}
+
+function parseFrontmatterValue(value) {
+  const unquoted = value.replace(/^["']|["']$/g, "");
+  if (unquoted === "true") return true;
+  if (unquoted === "false") return false;
+  return unquoted;
+}
+
 function titleFromMarkdown(text, relativePath) {
+  const frontmatter = extractFrontmatter(text);
+  if (frontmatter.title && typeof frontmatter.title === "string") return frontmatter.title;
   const match = stripFrontmatter(text).match(/^#\s+(.+)$/m);
   return match ? match[1].trim() : path.basename(relativePath, ".md");
 }
@@ -133,12 +164,17 @@ async function buildVault() {
     const relativePath = path.relative(vaultRoot, fullPath);
     const raw = await fs.readFile(fullPath, "utf8");
     const key = noteKey(relativePath);
+    const frontmatter = extractFrontmatter(raw);
     const note = {
       id: key,
       path: relativePath,
       title: titleFromMarkdown(raw, relativePath),
       preview: previewFromMarkdown(raw),
       tags: extractTags(raw),
+      kind: frontmatter.kind || "",
+      status: frontmatter.status || frontmatter.canonical_status || "",
+      layer: frontmatter.layer || "",
+      perspective: frontmatter.perspective === true || frontmatter.perspective === "true",
       links: [...extractWikiLinks(raw), ...extractMarkdownLinks(raw)],
       updatedAt: (await fs.stat(fullPath)).mtimeMs,
       content: raw
@@ -173,6 +209,10 @@ async function buildVault() {
     title: note.title,
     preview: note.preview,
     tags: note.tags,
+    kind: note.kind,
+    status: note.status,
+    layer: note.layer,
+    perspective: note.perspective,
     updatedAt: note.updatedAt,
     degree: edges.filter((edge) => edge.source === note.id || edge.target === note.id).length
   }));
@@ -183,6 +223,10 @@ async function buildVault() {
       path: note.path,
       title: note.title,
       tags: note.tags,
+      kind: note.kind,
+      status: note.status,
+      layer: note.layer,
+      perspective: note.perspective,
       group: (note.path || note.id).split("/")[0] || "root",
       degree: degreeById.get(note.id) || 0,
       heading: chunk.heading,

@@ -475,8 +475,16 @@ function perspectiveScore(node) {
   const title = (node.title || "").toLowerCase();
   const pathText = (node.path || node.id || "").toLowerCase();
   const combined = `${title} ${pathText}`;
-  const group = groupForNode(node);
+  const group = node.layer || groupForNode(node);
+  const kind = (node.kind || "").toLowerCase();
+  const status = (node.status || "").toLowerCase();
   let score = 0;
+
+  if (node.perspective === true) score += 46;
+  if (status === "canonical") score += 20;
+  if (status.includes("canonical")) score += 14;
+  if (["principle", "thesis", "self-model", "strategy", "research-axis", "research-agenda", "decision-pattern", "alignment", "business-priority"].includes(kind)) score += 26;
+  if (["operation", "source", "log", "template"].includes(kind)) score -= 28;
 
   if (group === "personal") score += 28;
   if (group === "company") score += 24;
