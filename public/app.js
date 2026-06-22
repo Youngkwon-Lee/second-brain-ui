@@ -408,8 +408,8 @@ function updateMajorLabels() {
   const canvas = graphEl.querySelector("canvas");
   if (!canvas) return;
   const labels = state.forceGraph.graphData().nodes
-    .filter((node) => (node.degree || 0) >= 24 && Number.isFinite(node.x) && Number.isFinite(node.y) && Number.isFinite(node.z))
-    .sort((a, b) => b.degree - a.degree)
+    .filter((node) => majorLabelScore(node) >= 18 && Number.isFinite(node.x) && Number.isFinite(node.y) && Number.isFinite(node.z))
+    .sort((a, b) => majorLabelScore(b) - majorLabelScore(a))
     .slice(0, 14);
 
   majorLabels.innerHTML = "";
@@ -427,6 +427,25 @@ function updateMajorLabels() {
     el.textContent = node.title.slice(0, 34);
     majorLabels.appendChild(el);
   }
+}
+
+function majorLabelScore(node) {
+  const title = (node.title || "").toLowerCase();
+  const pathText = (node.path || node.id || "").toLowerCase();
+  const group = groupForNode(node);
+  let score = Math.min(36, (node.degree || 0) * 0.8);
+
+  if (["personal", "company"].includes(group)) score += 22;
+  if (["research", "projects"].includes(group)) score += 10;
+  if (group === "operations") score -= 14;
+  if (["_inbox", "_templates", "candidates"].includes(group)) score -= 18;
+
+  if (/(principle|thesis|vision|strategy|identity|belief|taste|philosophy|canon|canonical|index|north star|operating model)/i.test(`${title} ${pathText}`)) score += 18;
+  if (/(생각|관점|원칙|철학|정체성|전략|비전|가설|방향|기준|세계관|취향)/.test(`${title} ${pathText}`)) score += 18;
+  if (/(google drive|drive|operation|ops|inventory|prompt inventory|full pass|triage|handoff|log|runbook|workflow evidence|daily|meeting|scratch)/i.test(`${title} ${pathText}`)) score -= 30;
+  if (title.length > 72) score -= 8;
+
+  return score;
 }
 
 function setHoveredNode(node) {
