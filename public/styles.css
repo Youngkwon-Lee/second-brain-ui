@@ -429,6 +429,7 @@ button, input { font: inherit; }
   color: #c8c8d0;
   font-size: 13px;
   line-height: 1.68;
+  white-space: pre-line;
 }
 
 .graph-hud {

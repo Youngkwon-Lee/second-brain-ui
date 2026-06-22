@@ -1,10 +1,11 @@
 import http from "node:http";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
+loadDotEnv(path.join(__dirname, ".env"));
 const defaultVault = path.join(process.env.HOME || process.cwd(), "Documents", "second-brain");
 const vaultRoot = path.resolve(process.env.OBSIDIAN_VAULT || defaultVault);
 const port = Number(process.env.PORT || 4177);
@@ -21,6 +22,27 @@ const ignoredDirs = new Set([
 let cache = null;
 let cacheTime = 0;
 const cacheMs = 2500;
+
+function loadDotEnv(filePath) {
+  try {
+    const text = requireEnvFile(filePath);
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const index = trimmed.indexOf("=");
+      const key = trimmed.slice(0, index).trim();
+      const rawValue = trimmed.slice(index + 1).trim();
+      const value = rawValue.replace(/^["']|["']$/g, "");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch {
+    // Optional local config.
+  }
+}
+
+function requireEnvFile(filePath) {
+  return readFileSync(filePath, "utf8");
+}
 
 async function walk(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -169,6 +191,7 @@ async function buildVault() {
       .map(([tag, count]) => ({ tag, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 80),
+    fullNotes: notes,
     notes: notes
       .map(({ content, ...note }) => note)
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -211,31 +234,28 @@ function askVault(vault, query) {
   const tokens = tokenizeQuery(query);
   if (!tokens.length) return { query, total: 0, results: [] };
 
-  const results = vault.nodes
-    .map((note) => {
-      const group = (note.path || note.id).split("/")[0] || "root";
-      const haystack = `${note.title} ${note.path} ${note.preview} ${note.tags.join(" ")}`.toLowerCase();
-      let score = 0;
-      for (const token of tokens) {
-        if (note.title.toLowerCase().includes(token)) score += 7;
-        if (note.path.toLowerCase().includes(token)) score += 4;
-        if (note.tags.some((tag) => tag.toLowerCase().includes(token))) score += 4;
-        if (note.preview.toLowerCase().includes(token)) score += 2;
-        if (haystack.includes(token)) score += 1;
-      }
-      score += Math.min(5, (note.degree || 0) / 8);
-      return {
+  const degreeById = new Map(vault.nodes.map((node) => [node.id, node.degree || 0]));
+  const chunkMatches = [];
+  for (const note of vault.fullNotes || []) {
+    for (const chunk of chunksForNote(note)) {
+      const score = scoreChunk(note, chunk, tokens, query) + Math.min(4, (degreeById.get(note.id) || 0) / 10);
+      if (score <= 0) continue;
+      chunkMatches.push({
         id: note.id,
         path: note.path,
         title: note.title,
-        preview: note.preview,
+        preview: chunk.snippet,
+        excerpt: chunk.snippet,
+        heading: chunk.heading,
         tags: note.tags,
-        degree: note.degree,
-        group,
+        degree: degreeById.get(note.id) || 0,
+        group: (note.path || note.id).split("/")[0] || "root",
         score
-      };
-    })
-    .filter((note) => note.score > 0)
+      });
+    }
+  }
+
+  const results = dedupeChunkMatches(chunkMatches)
     .sort((a, b) => b.score - a.score || b.degree - a.degree)
     .slice(0, 12);
 
@@ -246,19 +266,104 @@ function askVault(vault, query) {
       ? buildVaultAnswer(query, results)
       : "관련 노트를 찾지 못했습니다.",
     results
-  };
+};
 }
 
 function buildVaultAnswer(query, results) {
-  const sources = results.slice(0, 4);
+  const sources = results.slice(0, 5);
   const sourceLines = sources
     .map((note) => {
-      const preview = note.preview ? note.preview.replace(/\s+/g, " ").slice(0, 150) : "요약 가능한 본문 미리보기가 없습니다.";
-      return `- ${note.title}: ${preview}`;
+      const heading = note.heading ? ` (${note.heading})` : "";
+      const preview = note.excerpt ? note.excerpt.replace(/\s+/g, " ").slice(0, 220) : "요약 가능한 본문 근거가 없습니다.";
+      return `- ${note.title}${heading}: ${preview}`;
     })
     .join("\n");
 
-  return `"${query}"에 대해서 vault 안에서는 ${sources[0].title}를 가장 강한 근거로 볼 수 있습니다.\n\n관련 맥락은 ${sources.map((note) => note.group).filter(Boolean).slice(0, 3).join(", ")} 영역에 걸쳐 있고, 연결도가 높은 노트부터 보면 다음과 같습니다.\n\n${sourceLines}`;
+  const groups = [...new Set(sources.map((note) => note.group).filter(Boolean))].slice(0, 4).join(", ");
+  return `"${query}"에 대한 vault 기반 답변입니다.\n\n핵심 근거는 ${sources[0].title}에서 가장 강하게 잡히고, 관련 맥락은 ${groups || "vault"} 영역에 걸쳐 있습니다. 아래 source 조각들이 현재 답변의 근거입니다.\n\n${sourceLines}`;
+}
+
+function chunksForNote(note) {
+  const cleaned = stripFrontmatter(note.content)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, "$2$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_>`~-]/g, "");
+  const chunks = [];
+  let heading = note.title;
+  let buffer = [];
+
+  function flush() {
+    const text = buffer.join(" ").replace(/\s+/g, " ").trim();
+    if (text.length >= 40) {
+      chunks.push({
+        heading,
+        text,
+        snippet: text.slice(0, 360)
+      });
+    }
+    buffer = [];
+  }
+
+  for (const line of cleaned.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (buffer.join(" ").length > 700) flush();
+      continue;
+    }
+    const headingMatch = trimmed.match(/^#{1,4}\s+(.+)$/);
+    if (headingMatch) {
+      flush();
+      heading = headingMatch[1].trim();
+      continue;
+    }
+    buffer.push(trimmed.replace(/^[-*]\s+/, ""));
+    if (buffer.join(" ").length > 900) flush();
+  }
+  flush();
+  return chunks.length ? chunks : [{ heading: note.title, text: note.preview, snippet: note.preview }];
+}
+
+function scoreChunk(note, chunk, tokens, query) {
+  const title = note.title.toLowerCase();
+  const pathText = note.path.toLowerCase();
+  const tags = note.tags.map((tag) => tag.toLowerCase());
+  const text = chunk.text.toLowerCase();
+  const heading = (chunk.heading || "").toLowerCase();
+  const phrase = query.toLowerCase().trim();
+  let score = phrase.length > 2 && text.includes(phrase) ? 12 : 0;
+  for (const token of tokens) {
+    if (title.includes(token)) score += 8;
+    if (heading.includes(token)) score += 5;
+    if (pathText.includes(token)) score += 4;
+    if (tags.some((tag) => tag.includes(token))) score += 4;
+    score += Math.min(10, occurrenceCount(text, token) * 2);
+  }
+  return score;
+}
+
+function occurrenceCount(text, token) {
+  if (!token) return 0;
+  let count = 0;
+  let index = text.indexOf(token);
+  while (index !== -1) {
+    count += 1;
+    index = text.indexOf(token, index + token.length);
+  }
+  return count;
+}
+
+function dedupeChunkMatches(matches) {
+  const seen = new Set();
+  const sorted = matches.sort((a, b) => b.score - a.score);
+  const results = [];
+  for (const match of sorted) {
+    const key = `${match.id}:${match.heading}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(match);
+  }
+  return results;
 }
 
 async function serveStatic(res, pathname) {

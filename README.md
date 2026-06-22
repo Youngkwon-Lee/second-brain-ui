@@ -31,6 +31,19 @@ To use another Obsidian vault:
 OBSIDIAN_VAULT="/path/to/your/vault" npm start
 ```
 
+Or create a local `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit:
+
+```bash
+OBSIDIAN_VAULT=/path/to/your/obsidian-vault
+PORT=4177
+```
+
 Then open:
 
 ```bash
@@ -40,5 +53,5 @@ http://localhost:4177
 ## Notes
 
 - This is a local-first tool. It does not upload your vault.
-- The `Ask your vault` feature is currently local markdown retrieval and summarization, not hosted AI.
+- The `Ask your vault` feature is local markdown retrieval-augmented generation. It searches note body chunks and shows source notes, but it does not call hosted AI by default.
 - The app code is safe to publish, but your Obsidian vault should stay private unless you intentionally publish it.
