@@ -1,4 +1,4 @@
-const apiBase = location.protocol === "file:" ? "http://localhost:4177" : "";
+const apiBase = location.protocol === "file:" ? "http://localhost:4178" : "";
 const graphEl = document.getElementById("graph");
 const hoverCard = document.createElement("div");
 hoverCard.className = "hover-card";
@@ -6,6 +6,16 @@ document.querySelector(".main").appendChild(hoverCard);
 const majorLabels = document.createElement("div");
 majorLabels.className = "major-labels";
 document.querySelector(".main").appendChild(majorLabels);
+
+function initialLocale() {
+  const stored = localStorage.getItem("secondBrainLocale");
+  if (stored === "ko" || stored === "en") return stored;
+  return navigator.language?.toLowerCase().startsWith("ko") ? "ko" : "en";
+}
+
+function initialNotePanePosition() {
+  return localStorage.getItem("secondBrainNotePanePosition") === "left" ? "left" : "right";
+}
 
 const state = {
   graph: null,
@@ -20,10 +30,239 @@ const state = {
   hoverClearTimer: null,
   activeGroup: null,
   activeView: "linked",
+  health: null,
+  candidates: null,
+  activeHealthQueue: "isolated",
   askResults: [],
-  askMode: false
+  askMode: false,
+  evidenceMode: false,
+  locale: initialLocale(),
+  notePanePosition: initialNotePanePosition(),
+  notePaneDismissed: false,
+  currentEmptyPreviewGroup: null,
+  foldoutsInitialized: false
 };
 window.__vaultApp = state;
+
+const dictionaries = {
+  en: {
+    connecting: "Connecting vault",
+    refresh: "Refresh",
+    searchPlaceholder: "Search notes, tags, links",
+    overview: "Overview",
+    notes: "Notes",
+    edges: "Edges",
+    tags: "Tags",
+    unresolved: "Unresolved",
+    brainHealth: "Brain Health",
+    candidateQueue: "Candidate Queue",
+    keep: "Keep",
+    promote: "Promote",
+    archive: "Archive",
+    reviewReady: "Review ready",
+    recentCandidateStatus: "Recent Candidate Status",
+    recentNotes: "Recent Notes",
+    findEvidence: "Find evidence",
+    localMarkdownRetrieval: "local markdown retrieval",
+    evidencePlaceholder: "Search evidence notes",
+    openObsidian: "Open Obsidian",
+    selectedNote: "Selected Note",
+    loading: "Loading",
+    readingVault: "Reading vault.",
+    openInObsidian: "Open in Obsidian",
+    graphContext: "Graph Context",
+    collapsePanel: "Collapse panel",
+    moveCard: "Move card",
+    hideCard: "Hide card",
+    path: "Path",
+    degree: "Degree",
+    healthQueue: "Health Queue",
+    backlinks: "Backlinks",
+    outlinks: "Outlinks",
+    markdownPreview: "Markdown Preview",
+    noReviewReady: "No review-ready candidates.",
+    healthUnavailable: "Could not read health.json.",
+    noQueueItems: "No items in this queue.",
+    healthItem: "Health item",
+    healthQueueCaption: "Health queue",
+    healthMissingFromGraph: "This item exists in the context graph health report but is not included in the current canonical scan graph.",
+    hoverLocation: "Cursor position",
+    fullGraph: "Full linked graph",
+    noLinkedNotes: "No linked notes to display",
+    noLinkedNotesBody: "No linked notes match the current filter. Use the chips below to return to the full graph.",
+    previewMissing: "No preview text available.",
+    evidenceSearch: "Evidence search",
+    insufficientEvidence: "Not enough evidence to build a grounded result.",
+    noEvidenceTitle: "No related notes found",
+    noEvidenceBody: (query) => `No title, tag, path, or preview directly matches "${query}". Try different keywords.`,
+    ready: "ready",
+    searching: "searching",
+    noMatch: "no match",
+    linked: "linked",
+    full: "Full",
+    oneHop: "1-hop",
+    twoHop: "2-hop",
+    filters: "Filters",
+    perspective: "perspective",
+    hubs: "hubs",
+    recent: "recent",
+    isolated: "isolated",
+    frontmatter: "frontmatter",
+    promotion: "promotion",
+    context: "Context",
+    linkedNotesCount: (linked, total) => `${linked} linked / ${total} notes`,
+    sourcesCount: (count) => `${count} sources`,
+    linksCount: (count) => `${count} links`,
+    filteredBy: (group) => `${group} filter`,
+    score: "score",
+    matched: "matched",
+    vaultConnectFailed: "Vault connection failed",
+    fileServerHint: "This is a server app. Open http://localhost:4178 to connect to the Obsidian vault."
+  },
+  ko: {
+    connecting: "vault 연결 중",
+    refresh: "새로고침",
+    searchPlaceholder: "노트, 태그, 링크 검색",
+    overview: "개요",
+    notes: "노트",
+    edges: "링크",
+    tags: "태그",
+    unresolved: "미해결 링크",
+    brainHealth: "브레인 상태",
+    candidateQueue: "후보 큐",
+    keep: "Keep",
+    promote: "Promote",
+    archive: "Archive",
+    reviewReady: "검토 대기",
+    recentCandidateStatus: "최근 후보 상태",
+    recentNotes: "최근 노트",
+    findEvidence: "근거 찾기",
+    localMarkdownRetrieval: "로컬 마크다운 검색",
+    evidencePlaceholder: "근거 노트 검색",
+    openObsidian: "Obsidian 열기",
+    selectedNote: "선택된 노트",
+    loading: "로딩 중",
+    readingVault: "vault를 읽고 있습니다.",
+    openInObsidian: "Obsidian에서 열기",
+    graphContext: "그래프 맥락",
+    collapsePanel: "패널 접기",
+    moveCard: "카드 위치 이동",
+    hideCard: "카드 숨기기",
+    path: "경로",
+    degree: "연결 수",
+    healthQueue: "상태 큐",
+    backlinks: "백링크",
+    outlinks: "아웃링크",
+    markdownPreview: "마크다운 미리보기",
+    noReviewReady: "검토 대기 candidate가 없습니다.",
+    healthUnavailable: "health.json을 읽지 못했습니다.",
+    noQueueItems: "현재 큐에 항목이 없습니다.",
+    healthItem: "상태 항목",
+    healthQueueCaption: "상태 큐",
+    healthMissingFromGraph: "이 항목은 context graph health report에는 있지만 현재 canonical scan graph에는 포함되지 않았습니다.",
+    hoverLocation: "커서 위치",
+    fullGraph: "전체 연결 그래프",
+    noLinkedNotes: "표시할 연결 노트가 없습니다",
+    noLinkedNotesBody: "현재 필터에 해당하는 연결 노트가 메인 그래프 안에 없습니다. 하단의 전체 칩을 누르면 다시 전체 연결 그래프로 돌아갑니다.",
+    previewMissing: "미리보기 텍스트가 없습니다.",
+    evidenceSearch: "근거 검색",
+    insufficientEvidence: "답변을 만들 근거가 부족합니다.",
+    noEvidenceTitle: "관련 노트를 찾지 못했습니다",
+    noEvidenceBody: (query) => `"${query}"와 직접 연결되는 제목, 태그, 경로, 미리보기가 없습니다. 다른 키워드로 다시 검색해 보세요.`,
+    ready: "준비",
+    searching: "검색 중",
+    noMatch: "결과 없음",
+    linked: "연결",
+    full: "전체",
+    oneHop: "1-hop",
+    twoHop: "2-hop",
+    filters: "필터",
+    perspective: "관점",
+    hubs: "허브",
+    recent: "최근",
+    isolated: "고립",
+    frontmatter: "프론트매터",
+    promotion: "승격",
+    context: "맥락",
+    linkedNotesCount: (linked, total) => `${linked} 연결 / ${total} 노트`,
+    sourcesCount: (count) => `${count}개 근거`,
+    linksCount: (count) => `${count}개 링크`,
+    filteredBy: (group) => `${group} 필터`,
+    score: "점수",
+    matched: "매칭",
+    vaultConnectFailed: "vault 연결 실패",
+    fileServerHint: "이 파일은 서버 앱입니다. http://localhost:4178 로 열면 Obsidian vault와 정상 연결됩니다."
+  }
+};
+
+function t(key, ...args) {
+  const dictionary = dictionaries[state.locale] || dictionaries.en;
+  const value = dictionary[key] ?? dictionaries.en[key] ?? key;
+  return typeof value === "function" ? value(...args) : value;
+}
+
+function translatedViewLabel(viewId) {
+  return t(viewId);
+}
+
+function actionLabel(action) {
+  const labels = {
+    en: {
+      "review": "review",
+      "promote": "promote",
+      "promoted": "promoted",
+      "kept": "kept",
+      "reference": "reference",
+      "archived": "archived"
+    },
+    ko: {
+      "review": "검토",
+      "promote": "승격",
+      "promoted": "승격됨",
+      "kept": "보관",
+      "reference": "참고",
+      "archived": "아카이브"
+    }
+  };
+  return labels[state.locale]?.[action] || action;
+}
+
+function reasonLabel(reason) {
+  const labels = {
+    en: {
+      "exact title": "exact title",
+      "exact heading": "exact heading",
+      "exact text": "exact text",
+      "exact path": "exact path",
+      title: "title",
+      heading: "heading",
+      path: "path",
+      tag: "tag",
+      body: "body"
+    },
+    ko: {
+      "exact title": "제목 정확일치",
+      "exact heading": "섹션 정확일치",
+      "exact text": "본문 정확일치",
+      "exact path": "경로 정확일치",
+      title: "제목",
+      heading: "섹션",
+      path: "경로",
+      tag: "태그",
+      body: "본문"
+    }
+  };
+  return labels[state.locale]?.[reason] || reason;
+}
+
+function formatEvidenceMeta(note) {
+  const reasons = (note.matchReasons || []).slice(0, 3).map(reasonLabel).join(", ");
+  const terms = (note.matchedTerms || []).slice(0, 3).join(", ");
+  const parts = [`${t("score")} ${Math.round(Number(note.score || 0))}`];
+  if (reasons) parts.push(reasons);
+  if (terms) parts.push(`${t("matched")} ${terms}`);
+  return parts.join(" · ");
+}
 
 const groupColors = {
   personal: "#8b5cf6",
@@ -44,9 +283,77 @@ const graphViews = [
   { id: "isolated", label: "isolated" }
 ];
 
+function applyLocale() {
+  document.documentElement.lang = state.locale === "ko" ? "ko" : "en";
+  document.querySelectorAll("[data-i18n]").forEach((element) => {
+    if (element.id === "noteMode" && state.graph) return;
+    element.textContent = t(element.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => {
+    element.placeholder = t(element.dataset.i18nPlaceholder);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((element) => {
+    element.title = t(element.dataset.i18nTitle);
+  });
+  const localeToggle = document.getElementById("localeToggle");
+  if (localeToggle) {
+    localeToggle.textContent = state.locale.toUpperCase();
+    localeToggle.title = state.locale === "ko" ? "한국어" : "English";
+  }
+  const askInput = document.getElementById("askInput");
+  const askStatus = document.getElementById("askStatus");
+  if (askInput && askStatus && askInput.value.trim().length < 2) askStatus.textContent = t("ready");
+}
+
+function setLocale(locale) {
+  state.locale = locale === "ko" ? "ko" : "en";
+  localStorage.setItem("secondBrainLocale", state.locale);
+  applyLocale();
+  if (state.graph) {
+    renderSidebar();
+    renderHealthList();
+    refreshActivePreview();
+  }
+}
+
+function applyNotePanePosition() {
+  const pane = document.getElementById("notePane");
+  pane.classList.toggle("left", state.notePanePosition === "left");
+  pane.classList.toggle("right", state.notePanePosition !== "left");
+}
+
+function showNotePane() {
+  state.notePaneDismissed = false;
+  document.getElementById("notePane").classList.remove("hidden");
+}
+
+function hideNotePane() {
+  state.notePaneDismissed = true;
+  document.getElementById("notePane").classList.add("hidden");
+}
+
+function toggleNotePanePosition() {
+  state.notePanePosition = state.notePanePosition === "left" ? "right" : "left";
+  localStorage.setItem("secondBrainNotePanePosition", state.notePanePosition);
+  applyNotePanePosition();
+}
+
 async function fetchJson(url) {
   const res = await fetch(`${apiBase}${url}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function postJson(url, payload) {
+  const res = await fetch(`${apiBase}${url}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.error || `${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -92,15 +399,14 @@ function renderSidebar() {
   document.getElementById("statNotes").textContent = graph.stats.notes.toLocaleString();
   document.getElementById("statEdges").textContent = graph.stats.edges.toLocaleString();
   document.getElementById("statTags").textContent = graph.stats.tags.toLocaleString();
+  document.getElementById("statUnresolved").textContent = graph.stats.unresolved.toLocaleString();
+  renderHealthSummary();
+  renderCandidateQueue();
 
   const noteList = document.getElementById("noteList");
   noteList.innerHTML = "";
   for (const note of state.notes.slice(0, 80)) {
-    const item = document.createElement("div");
-    item.className = `note-item${state.selected?.id === note.id ? " active" : ""}`;
-    item.innerHTML = `<strong>${escapeHtml(note.title)}</strong><span>${escapeHtml(note.path)} · ${(note.links || []).length} links</span>`;
-    item.addEventListener("click", () => selectNote(note.id));
-    noteList.appendChild(item);
+    noteList.appendChild(createNoteListItem(note, state.evidenceMode ? formatEvidenceMeta(note) : ""));
   }
 
   const tagList = document.getElementById("tagList");
@@ -119,19 +425,206 @@ function renderSidebar() {
   const graphHud = document.getElementById("graphHud");
   graphHud.innerHTML = "";
   const linkedCount = graph.nodes.filter((node) => node.degree > 0).length;
-  const countChip = createHudChip(`${linkedCount.toLocaleString()} linked / ${graph.stats.notes.toLocaleString()} notes`, state.activeView === "linked" && state.activeGroup === null, () => applyGraphFilter({ view: "linked", group: null }));
-  graphHud.appendChild(countChip);
+  const primaryHud = document.createElement("div");
+  primaryHud.className = "hud-row primary";
+  primaryHud.appendChild(createHudChip(t("full"), state.activeView === "linked" && state.activeGroup === null, () => applyGraphFilter({ view: "linked", group: null })));
+  primaryHud.appendChild(createHudChip(t("oneHop"), state.activeView === "context1", () => applyGraphFilter({ view: "context1", group: null }), null, !state.selected));
+  primaryHud.appendChild(createHudChip(t("twoHop"), state.activeView === "context2", () => applyGraphFilter({ view: "context2", group: null }), null, !state.selected));
+  const count = document.createElement("span");
+  count.className = "hud-count";
+  count.textContent = t("linkedNotesCount", linkedCount.toLocaleString(), graph.stats.notes.toLocaleString());
+  primaryHud.appendChild(count);
+  graphHud.appendChild(primaryHud);
+
+  const secondaryHud = document.createElement("details");
+  secondaryHud.className = "hud-filters";
+  const summary = document.createElement("summary");
+  summary.textContent = t("filters");
+  secondaryHud.appendChild(summary);
+  const filterRow = document.createElement("div");
+  filterRow.className = "hud-row filters";
   for (const view of graphViews.slice(1)) {
-    graphHud.appendChild(createHudChip(view.label, state.activeView === view.id, () => applyGraphFilter({ view: view.id })));
+    filterRow.appendChild(createHudChip(translatedViewLabel(view.id), state.activeView === view.id, () => applyGraphFilter({ view: view.id })));
   }
   for (const { label, color } of availableGroups(graph).slice(0, 7)) {
-    graphHud.appendChild(createHudChip(label, state.activeGroup === label, () => applyGraphFilter({ group: state.activeGroup === label ? null : label }), color));
+    filterRow.appendChild(createHudChip(label, state.activeGroup === label, () => applyGraphFilter({ group: state.activeGroup === label ? null : label }), color));
+  }
+  secondaryHud.appendChild(filterRow);
+  graphHud.appendChild(secondaryHud);
+}
+
+function renderHealthSummary() {
+  const health = state.health;
+  const stats = health?.stats || {};
+  const isolatedCount = stats.isolated_canonical_non_literature ?? health?.isolated?.length ?? 0;
+  const frontmatterCount = stats.missing_frontmatter ?? health?.missingFrontmatter?.length ?? 0;
+  const promotionCount = stats.candidate_promotion_hints ?? health?.candidatePromotions?.length ?? 0;
+  setHealthCard("healthIsolated", isolatedCount, "isolated");
+  setHealthCard("healthFrontmatter", frontmatterCount, "missingFrontmatter");
+  setHealthCard("healthPromotions", promotionCount, "candidatePromotions");
+  const total = Number(isolatedCount || 0) + Number(frontmatterCount || 0) + Number(promotionCount || 0);
+  document.getElementById("healthSummaryBadge").textContent = total.toLocaleString();
+  updateHealthQueueVisibility();
+}
+
+function setHealthCard(id, count, queueName) {
+  const card = document.getElementById(id);
+  if (!card) return;
+  card.classList.toggle("active", state.activeHealthQueue === queueName);
+  card.querySelector("strong").textContent = Number(count || 0).toLocaleString();
+  card.onclick = () => {
+    state.activeHealthQueue = queueName;
+    renderHealthList();
+    renderHealthSummary();
+  };
+}
+
+function renderCandidateQueue() {
+  const candidates = state.candidates;
+  const readyCount = Number(candidates?.reviewReady || 0);
+  document.getElementById("candidateReady").textContent = readyCount.toLocaleString();
+  document.getElementById("candidateSummaryBadge").textContent = readyCount.toLocaleString();
+  const list = document.getElementById("candidateList");
+  list.innerHTML = "";
+  const readyNotes = candidates?.readyNotes || [];
+  if (!readyNotes.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state success";
+    empty.textContent = t("noReviewReady");
+    list.appendChild(empty);
+  }
+  for (const note of readyNotes.slice(0, 8)) {
+    list.appendChild(createCandidateListItem(note, true));
+  }
+
+  const archiveList = document.getElementById("candidateArchiveList");
+  archiveList.innerHTML = "";
+  for (const note of (candidates?.archiveNotes || []).slice(0, 5)) {
+    archiveList.appendChild(createCandidateListItem(note, false));
+  }
+  syncFoldoutDefaults();
+}
+
+function syncFoldoutDefaults() {
+  if (state.foldoutsInitialized || !state.health || !state.candidates) return;
+  const healthOpen = Number(document.getElementById("healthSummaryBadge")?.textContent.replace(/,/g, "") || 0) > 0;
+  const candidateOpen = Number(document.getElementById("candidateSummaryBadge")?.textContent.replace(/,/g, "") || 0) > 0;
+  document.getElementById("brainHealthFoldout").open = healthOpen;
+  document.getElementById("candidateQueueFoldout").open = candidateOpen;
+  state.foldoutsInitialized = true;
+}
+
+function renderHealthList() {
+  const list = document.getElementById("healthList");
+  if (!list) return;
+  list.innerHTML = "";
+  const items = healthItemsForQueue(state.activeHealthQueue);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = state.health?.available === false ? t("healthUnavailable") : t("noQueueItems");
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of items.slice(0, 14)) {
+    const note = graphNodeForHealthItem(item);
+    const row = document.createElement("div");
+    row.className = "note-item health-item";
+    row.innerHTML = `<strong>${escapeHtml(item.title || item.id || "Untitled")}</strong><span>${escapeHtml(item.id || item.path || "")} · ${t("degree")} ${item.degree ?? "-"}</span>`;
+    row.addEventListener("click", () => {
+      if (note) selectNote(note.id);
+      else renderHealthPreview(item);
+    });
+    list.appendChild(row);
+  }
+  updateHealthQueueVisibility();
+}
+
+function updateHealthQueueVisibility() {
+  const section = document.getElementById("healthQueueSection");
+  if (!section) return;
+  const hasIssues = ["isolated", "missingFrontmatter", "candidatePromotions"].some((queueName) => healthItemsForQueue(queueName).length > 0);
+  section.hidden = !hasIssues;
+}
+
+function healthItemsForQueue(queueName) {
+  if (!state.health?.available) return [];
+  return {
+    isolated: state.health.isolated || [],
+    missingFrontmatter: state.health.missingFrontmatter || [],
+    candidatePromotions: state.health.candidatePromotions || [],
+    routerLeaf: state.health.routerLeaf || []
+  }[queueName] || [];
+}
+
+function graphNodeForHealthItem(item) {
+  const id = String(item.id || "").replace(/\.md$/, "");
+  return state.graph?.nodes.find((node) => node.id === id || node.path === item.id) || null;
+}
+
+function renderHealthPreview(item) {
+  showNotePane();
+  setNotePaneMeta(t("healthQueueCaption"), item.id || "-", item.degree ?? "-");
+  document.getElementById("noteTitle").textContent = item.title || item.id || t("healthItem");
+  document.getElementById("notePreview").textContent = t("healthMissingFromGraph");
+  document.getElementById("selectedPath").textContent = item.id || "-";
+  document.getElementById("selectedDegree").textContent = item.degree ?? "-";
+  document.getElementById("noteTags").innerHTML = "";
+}
+
+function createNoteListItem(note, meta = "") {
+  const item = document.createElement("div");
+  item.className = `note-item${state.selected?.id === note.id ? " active" : ""}`;
+  const detail = meta || t("linksCount", (note.links || []).length);
+  item.innerHTML = `<strong>${escapeHtml(note.title)}</strong><span>${escapeHtml(note.path)} · ${escapeHtml(detail)}</span>`;
+  item.addEventListener("click", () => selectNote(note.id));
+  return item;
+}
+
+function createCandidateListItem(note, showActions) {
+  const item = createNoteListItem(note, `${actionLabel(note.actionHint)} · ${t("score")} ${Math.round(note.reviewScore || 0)}`);
+  item.classList.add("candidate-item");
+  if (!showActions) return item;
+  const actions = document.createElement("div");
+  actions.className = "candidate-actions";
+  for (const action of ["keep", "promote", "archive"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = t(action);
+    button.className = `candidate-action ${action}`;
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await applyCandidateAction(note.id, action, button);
+    });
+    actions.appendChild(button);
+  }
+  item.appendChild(actions);
+  return item;
+}
+
+async function applyCandidateAction(id, action, button) {
+  const previous = button.textContent;
+  button.disabled = true;
+  button.textContent = "...";
+  try {
+    await postJson("/api/candidate-action", { id, action });
+    state.candidates = await fetchJson("/api/candidates");
+    state.graph = await fetchJson("/api/graph");
+    renderSidebar();
+  } catch (error) {
+    button.textContent = "!";
+    setTimeout(() => {
+      button.textContent = previous;
+      button.disabled = false;
+    }, 1400);
+    console.error(error);
   }
 }
 
-function createHudChip(label, active, onClick, color = null) {
+function createHudChip(label, active, onClick, color = null, disabled = false) {
   const chip = document.createElement("button");
   chip.className = `chip${active ? " active" : ""}`;
+  chip.disabled = disabled;
   chip.innerHTML = `<span class="dot"${color ? ` style="background:${color}"` : ""}></span>${escapeHtml(label)}`;
   chip.addEventListener("click", onClick);
   return chip;
@@ -185,6 +678,9 @@ function graphDataFromVault(graph) {
 }
 
 function idsForActiveView(graph, linkedNodes, linkedEdges) {
+  if (state.activeView === "context1" || state.activeView === "context2") {
+    return neighborhoodIds(graph, state.selected?.id, state.activeView === "context2" ? 2 : 1);
+  }
   if (state.activeView === "isolated") {
     return new Set(graph.nodes.filter((node) => node.degree === 0).map((node) => node.id));
   }
@@ -231,11 +727,13 @@ function idsForActiveView(graph, linkedNodes, linkedEdges) {
 }
 
 function applyGraphFilter({ view = state.activeView, group = state.activeGroup } = {}) {
+  if ((view === "context1" || view === "context2") && !state.selected) return;
   state.activeView = view;
-  state.activeGroup = group;
+  state.activeGroup = view === "context1" || view === "context2" ? null : group;
   state.hovered = null;
   updateHoverCard(null);
   if (state.graph) {
+    showNotePane();
     installGraph(state.graph);
     renderSidebar();
     const firstNode = state.forceGraph?.graphData().nodes[0];
@@ -248,8 +746,34 @@ function applyGraphFilter({ view = state.activeView, group = state.activeGroup }
 }
 
 function labelForCurrentGraph() {
-  const view = graphViews.find((item) => item.id === state.activeView)?.label || state.activeView;
+  if (state.activeView === "context1") return `${t("oneHop")} · ${state.selected?.title || t("selectedNote")}`;
+  if (state.activeView === "context2") return `${t("twoHop")} · ${state.selected?.title || t("selectedNote")}`;
+  const view = translatedViewLabel(graphViews.find((item) => item.id === state.activeView)?.id || state.activeView);
   return state.activeGroup ? `${view} · ${state.activeGroup}` : view;
+}
+
+function neighborhoodIds(graph, rootId, depth) {
+  if (!rootId) return new Set();
+  const adjacency = new Map(graph.nodes.map((node) => [node.id, new Set()]));
+  for (const edge of graph.edges) {
+    if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) continue;
+    adjacency.get(edge.source).add(edge.target);
+    adjacency.get(edge.target).add(edge.source);
+  }
+  const visible = new Set([rootId]);
+  let frontier = new Set([rootId]);
+  for (let level = 0; level < depth; level++) {
+    const next = new Set();
+    for (const id of frontier) {
+      for (const neighbor of adjacency.get(id) || []) {
+        if (visible.has(neighbor)) continue;
+        visible.add(neighbor);
+        next.add(neighbor);
+      }
+    }
+    frontier = next;
+  }
+  return visible;
 }
 
 function seededPhase(value) {
@@ -414,7 +938,7 @@ function updateHoverCard(node) {
     hoverCard.style.display = "none";
     return;
   }
-  hoverCard.innerHTML = `<strong>${escapeHtml(node.title)}</strong><span>${escapeHtml(node.path)} · ${node.degree || 0} links</span>`;
+  hoverCard.innerHTML = `<strong>${escapeHtml(node.title)}</strong><span>${escapeHtml(node.path)} · ${t("linksCount", node.degree || 0)}</span>`;
   hoverCard.style.display = "block";
 }
 
@@ -494,7 +1018,7 @@ function perspectiveScore(node) {
 
   if (/(identity|philosophy|principle|decision|operating-system|north-star|thesis|vision|strategy|priority|priorities|belief|taste|self-model|mission|values)/i.test(combined)) score += 28;
   if (/(정체성|철학|원칙|판단|의사결정|비전|전략|가설|관점|생각|세계관|미션|가치|우선순위|방향)/.test(combined)) score += 28;
-  if (/(current-research-priorities|human-state-infrastructure|clinical-ai-copilot|ai-native-company-principles|current-thesis|personal-operating-system|decision-patterns|identity-and-philosophy|north-star-alignment)/i.test(combined)) score += 26;
+  if (/(current|priority|research-agenda|infrastructure|copilot|principles|thesis|operating-system|decision-pattern|identity|alignment)/i.test(combined)) score += 12;
   if (/(readme|index|catalog|registry|lineage|queue|map)$/i.test(title) || /(\/readme|\/index|catalog|registry|lineage|queue)/i.test(pathText)) score -= 14;
   if (/(research\/literature|research\/papers|papers\/|literature\/)/i.test(pathText) || /_[a-z-]+_\d{4}$/i.test(title)) score -= 34;
   if (/(google drive|drive|operation|ops|inventory|full pass|triage|handoff|log|runbook|workflow|meeting|scratch|template|checklist)/i.test(combined)) score -= 30;
@@ -508,8 +1032,8 @@ function setHoveredNode(node) {
   state.hovered = node || null;
   graphEl.style.cursor = node ? "pointer" : "grab";
   updateHoverCard(node);
-  if (!state.askMode || document.activeElement?.id !== "askInput") {
-    renderNodePreview(node || state.selected, node ? "커서 위치" : "선택된 노트");
+  if (!state.evidenceMode && (!state.askMode || document.activeElement?.id !== "askInput")) {
+    renderNodePreview(node || state.selected, node ? t("hoverLocation") : t("selectedNote"));
   }
   update3dFocusStyles();
 }
@@ -535,11 +1059,12 @@ function nearestNodeFromPointer(event) {
   return best;
 }
 
-function renderNodePreview(node, label = "선택된 노트") {
+function renderNodePreview(node, label = t("selectedNote")) {
   if (!node) return;
-  document.querySelector("#notePane .caption").textContent = label;
+  state.currentEmptyPreviewGroup = null;
+  setNotePaneMeta(label, node.path || "-", node.degree ?? "-");
   document.getElementById("noteTitle").textContent = node.title;
-  document.getElementById("notePreview").textContent = node.preview || "미리보기 텍스트가 없습니다.";
+  document.getElementById("notePreview").textContent = node.preview || t("previewMissing");
   document.getElementById("selectedPath").textContent = node.path || "-";
   document.getElementById("selectedDegree").textContent = node.degree ?? "-";
 
@@ -553,10 +1078,18 @@ function renderNodePreview(node, label = "선택된 노트") {
   }
 }
 
+function setNotePaneMeta(label, pathValue, degreeValue) {
+  if (!state.notePaneDismissed) document.getElementById("notePane").classList.remove("hidden");
+  document.getElementById("noteMode").textContent = label;
+  document.getElementById("notePathMini").textContent = pathValue || "-";
+  document.getElementById("noteDegreeMini").textContent = `${t("degree")} ${degreeValue ?? "-"}`;
+}
+
 function renderEmptyPreview(group) {
-  document.querySelector("#notePane .caption").textContent = group ? `${group} 필터` : "전체 연결 그래프";
-  document.getElementById("noteTitle").textContent = "표시할 연결 노트가 없습니다";
-  document.getElementById("notePreview").textContent = "현재 필터에 해당하는 연결 노트가 메인 그래프 안에 없습니다. 하단의 전체 칩을 누르면 다시 전체 연결 그래프로 돌아갑니다.";
+  state.currentEmptyPreviewGroup = group || "";
+  setNotePaneMeta(group ? t("filteredBy", group) : t("fullGraph"), group || "-", "0");
+  document.getElementById("noteTitle").textContent = t("noLinkedNotes");
+  document.getElementById("notePreview").textContent = t("noLinkedNotesBody");
   document.getElementById("selectedPath").textContent = group || "-";
   document.getElementById("selectedDegree").textContent = "0";
   document.getElementById("noteTags").innerHTML = "";
@@ -597,9 +1130,11 @@ function isNodeLinkedToFocus(node) {
 
 async function selectNote(id) {
   state.askMode = false;
+  state.evidenceMode = false;
+  showNotePane();
   const note = await fetchJson(`/api/note?id=${encodeURIComponent(id)}`);
   state.selected = note;
-  renderNodePreview(note, "선택된 노트");
+  renderNodePreview(note, t("selectedNote"));
   document.getElementById("markdownPreview").textContent = note.content.slice(0, 1800);
 
   const backlinks = document.getElementById("backlinks");
@@ -612,7 +1147,21 @@ async function selectNote(id) {
     backlinks.appendChild(item);
   }
 
+  const outlinks = document.getElementById("outlinks");
+  outlinks.innerHTML = "";
+  for (const outlink of note.outlinks || []) {
+    const item = document.createElement("div");
+    item.className = "backlink";
+    item.innerHTML = `<strong>${escapeHtml(outlink.title)}</strong><span>${escapeHtml(outlink.path)}</span>`;
+    item.addEventListener("click", () => selectNote(outlink.id));
+    outlinks.appendChild(item);
+  }
+
+  if (state.activeView === "context1" || state.activeView === "context2") {
+    installGraph(state.graph);
+  }
   renderSidebar();
+  renderHealthList();
   update3dFocusStyles();
 }
 
@@ -626,13 +1175,15 @@ async function askVault(query) {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     state.askResults = [];
-    askStatus.textContent = "ready";
+    askStatus.textContent = t("ready");
     return;
   }
 
-  askStatus.textContent = "searching";
+  askStatus.textContent = t("searching");
+  showNotePane();
   const result = await fetchJson(`/api/ask?q=${encodeURIComponent(trimmed)}`);
   state.askMode = true;
+  state.evidenceMode = true;
   state.askResults = result.results || [];
   state.notes = state.askResults;
   renderSidebar();
@@ -642,38 +1193,65 @@ async function askVault(query) {
     state.selected = first;
     renderAskAnswer(trimmed, result.answer, state.askResults);
     document.getElementById("markdownPreview").textContent = result.answer || "";
-    askStatus.textContent = `${state.askResults.length} sources`;
+    askStatus.textContent = t("sourcesCount", state.askResults.length);
     update3dFocusStyles();
   } else {
     renderEmptyAsk(trimmed);
-    askStatus.textContent = "no match";
+    askStatus.textContent = t("noMatch");
   }
 }
 
 function renderAskAnswer(query, answer, results) {
-  document.querySelector("#notePane .caption").textContent = `Ask · ${results.length} sources`;
+  setNotePaneMeta(`${t("evidenceSearch")} · ${t("sourcesCount", results.length)}`, results[0]?.path || "-", results[0]?.degree ?? "-");
   document.getElementById("noteTitle").textContent = query;
-  document.getElementById("notePreview").textContent = answer || "답변을 만들 근거가 부족합니다.";
+  document.getElementById("notePreview").textContent = answer || t("insufficientEvidence");
   document.getElementById("selectedPath").textContent = results[0]?.path || "-";
   document.getElementById("selectedDegree").textContent = results[0]?.degree ?? "-";
 
   const tags = document.getElementById("noteTags");
   tags.innerHTML = "";
-  for (const note of results.slice(0, 5)) {
+  const evidenceChips = [
+    ...(results[0]?.matchReasons || []).slice(0, 4).map(reasonLabel),
+    ...(results[0]?.matchedTerms || []).slice(0, 4)
+  ];
+  for (const label of evidenceChips.slice(0, 8)) {
     const el = document.createElement("span");
     el.className = "tag";
-    el.textContent = note.title.slice(0, 28);
+    el.textContent = label.slice(0, 28);
     tags.appendChild(el);
   }
 }
 
 function renderEmptyAsk(query) {
-  document.querySelector("#notePane .caption").textContent = "Ask 결과";
-  document.getElementById("noteTitle").textContent = "관련 노트를 찾지 못했습니다";
-  document.getElementById("notePreview").textContent = `"${query}"와 직접 연결되는 제목, 태그, 경로, 미리보기가 없습니다. 다른 키워드로 다시 질문해 보세요.`;
+  setNotePaneMeta(t("evidenceSearch"), "-", "0");
+  document.getElementById("noteTitle").textContent = t("noEvidenceTitle");
+  document.getElementById("notePreview").textContent = t("noEvidenceBody", query);
   document.getElementById("selectedPath").textContent = "-";
   document.getElementById("selectedDegree").textContent = "0";
   document.getElementById("noteTags").innerHTML = "";
+}
+
+function refreshActivePreview() {
+  const askInput = document.getElementById("askInput");
+  const query = askInput?.value.trim() || "";
+  if (state.askMode && state.askResults.length) {
+    const answer = document.getElementById("notePreview").textContent;
+    renderAskAnswer(query || document.getElementById("noteTitle").textContent, answer, state.askResults);
+    document.getElementById("askStatus").textContent = t("sourcesCount", state.askResults.length);
+    return;
+  }
+  if (state.askMode && query.length >= 2) {
+    renderEmptyAsk(query);
+    document.getElementById("askStatus").textContent = t("noMatch");
+    return;
+  }
+  if (state.selected) {
+    renderNodePreview(state.selected, t("selectedNote"));
+    return;
+  }
+  if (state.currentEmptyPreviewGroup !== null) {
+    renderEmptyPreview(state.currentEmptyPreviewGroup);
+  }
 }
 
 async function load() {
@@ -681,9 +1259,12 @@ async function load() {
     throw new Error("3d-force-graph 라이브러리를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.");
   }
   state.graph = await fetchJson("/api/graph");
+  state.health = await fetchJson("/api/health");
+  state.candidates = await fetchJson("/api/candidates");
   state.notes = await fetchJson("/api/notes");
   installGraph(state.graph);
   renderSidebar();
+  renderHealthList();
   const first = state.graph.nodes.find((node) => node.path === "INDEX.md") || state.graph.nodes[0];
   if (first) await selectNote(first.id);
 }
@@ -699,9 +1280,12 @@ function escapeHtml(value) {
 }
 
 let askTimer = null;
+applyLocale();
+applyNotePanePosition();
 document.getElementById("searchInput").addEventListener("input", (event) => searchNotes(event.target.value));
 document.getElementById("searchInput").addEventListener("focus", () => {
   state.askMode = false;
+  state.evidenceMode = false;
 });
 document.getElementById("askInput").addEventListener("input", (event) => {
   clearTimeout(askTimer);
@@ -714,16 +1298,28 @@ document.getElementById("askInput").addEventListener("keydown", async (event) =>
   if (state.askResults[0]) selectNote(state.askResults[0].id);
 });
 document.getElementById("refresh").addEventListener("click", () => load());
+document.getElementById("localeToggle").addEventListener("click", () => {
+  setLocale(state.locale === "en" ? "ko" : "en");
+});
 document.getElementById("openObsidian").addEventListener("click", () => {
-  openInObsidian(state.graph?.vaultRoot);
+  openInObsidian("");
 });
 document.getElementById("openSelectedNote").addEventListener("click", () => {
-  if (!state.graph?.vaultRoot || !state.selected?.id) return;
-  openInObsidian(`${state.graph.vaultRoot}/${state.selected.id}.md`);
+  if (!state.selected?.path) return;
+  openInObsidian(state.selected.path);
+});
+document.getElementById("moveNotePane").addEventListener("click", toggleNotePanePosition);
+document.getElementById("closeNotePane").addEventListener("click", hideNotePane);
+document.getElementById("toggleContext").addEventListener("click", () => {
+  document.getElementById("rightbar").classList.toggle("collapsed");
+});
+document.getElementById("closeContext").addEventListener("click", () => {
+  document.getElementById("rightbar").classList.add("collapsed");
 });
 
-function openInObsidian(path) {
-  if (path) location.href = `obsidian://open?path=${encodeURIComponent(path)}`;
+async function openInObsidian(relativePath) {
+  const result = await fetchJson(`/api/open?path=${encodeURIComponent(relativePath || "")}`);
+  location.href = result.url;
 }
 
 graphEl.addEventListener("mousemove", (event) => {
@@ -747,8 +1343,8 @@ addEventListener("resize", () => {
 });
 
 load().catch((error) => {
-  document.getElementById("noteTitle").textContent = "vault 연결 실패";
+  document.getElementById("noteTitle").textContent = t("vaultConnectFailed");
   document.getElementById("notePreview").textContent = location.protocol === "file:"
-    ? "이 파일은 서버 앱입니다. http://localhost:4177 로 열면 Obsidian vault와 디자인이 정상 연결됩니다."
+    ? t("fileServerHint")
     : error.message;
 });

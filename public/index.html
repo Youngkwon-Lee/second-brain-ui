@@ -8,79 +8,118 @@
 </head>
 <body>
   <div class="app">
-    <nav class="rail" aria-label="주요 도구">
-      <button class="active" title="그래프" data-view="graph">⌘</button>
-      <button title="파일">□</button>
-      <button title="검색">⌕</button>
-      <button title="캘린더">◷</button>
-      <div class="spacer"></div>
-      <button title="설정">⚙</button>
-    </nav>
-
     <aside class="sidebar">
       <div class="panel-head">
         <div>
           <div class="title">Second Brain</div>
-          <div class="caption" id="vaultPath">vault 연결 중</div>
+          <div class="caption" id="vaultPath" data-i18n="connecting">Connecting vault</div>
         </div>
-        <button class="icon-button" id="refresh" title="새로고침">↻</button>
+        <div class="header-actions">
+          <button class="locale-toggle" id="localeToggle" type="button" title="Language">EN</button>
+          <button class="icon-button" id="refresh" title="Refresh" data-i18n-title="refresh">↻</button>
+        </div>
       </div>
       <label class="search">
         <span>⌕</span>
-        <input id="searchInput" placeholder="노트, 태그, 링크 검색" />
+        <input id="searchInput" placeholder="Search notes, tags, links" data-i18n-placeholder="searchPlaceholder" />
       </label>
       <div class="section">
-        <div class="section-label">Overview</div>
-        <div class="stat-line"><span>Notes</span><strong id="statNotes">0</strong></div>
-        <div class="stat-line"><span>Edges</span><strong id="statEdges">0</strong></div>
-        <div class="stat-line"><span>Tags</span><strong id="statTags">0</strong></div>
+        <div class="section-label" data-i18n="overview">Overview</div>
+        <div class="stat-line"><span data-i18n="notes">Notes</span><strong id="statNotes">0</strong></div>
+        <div class="stat-line"><span data-i18n="edges">Edges</span><strong id="statEdges">0</strong></div>
+        <div class="stat-line"><span data-i18n="tags">Tags</span><strong id="statTags">0</strong></div>
+        <div class="stat-line"><span data-i18n="unresolved">Unresolved</span><strong id="statUnresolved">0</strong></div>
       </div>
-      <div class="section">
-        <div class="section-label">Recent Notes</div>
+      <details class="section foldout" id="brainHealthFoldout" open>
+        <summary>
+          <span data-i18n="brainHealth">Brain Health</span>
+          <span class="summary-badge" id="healthSummaryBadge">0</span>
+        </summary>
+        <div class="health-grid">
+          <button class="health-card" id="healthIsolated"><span data-i18n="isolated">Isolated</span><strong>0</strong></button>
+          <button class="health-card" id="healthFrontmatter"><span data-i18n="frontmatter">Frontmatter</span><strong>0</strong></button>
+          <button class="health-card" id="healthPromotions"><span data-i18n="promotion">Promotion</span><strong>0</strong></button>
+        </div>
+      </details>
+      <details class="section foldout" id="candidateQueueFoldout" open>
+        <summary>
+          <span data-i18n="candidateQueue">Candidate Queue</span>
+          <span class="summary-badge" id="candidateSummaryBadge">0</span>
+        </summary>
+        <div class="stat-line"><span data-i18n="reviewReady">Review ready</span><strong id="candidateReady">0</strong></div>
+        <div id="candidateList" class="note-list compact"></div>
+        <details class="foldout">
+          <summary data-i18n="recentCandidateStatus">Recent Candidate Status</summary>
+          <div id="candidateArchiveList" class="note-list compact archive"></div>
+        </details>
+      </details>
+      <details class="section foldout">
+        <summary data-i18n="recentNotes">Recent Notes</summary>
         <div id="noteList" class="note-list"></div>
-      </div>
-      <div class="section tags-section">
-        <div class="section-label">Tags</div>
+      </details>
+      <details class="section foldout tags-section">
+        <summary data-i18n="tags">Tags</summary>
         <div id="tagList" class="tag-list"></div>
-      </div>
+      </details>
     </aside>
 
     <main class="main">
       <div class="topbar">
         <label class="query" for="askInput">
           <span>◇</span>
-          <span><strong>Ask your vault</strong> · 실제 Obsidian markdown 그래프</span>
-          <input id="askInput" placeholder="vault에 질문하기" autocomplete="off" />
+          <span><strong data-i18n="findEvidence">Find evidence</strong> · <span data-i18n="localMarkdownRetrieval">local markdown retrieval</span></span>
+          <input id="askInput" placeholder="Search evidence notes" data-i18n-placeholder="evidencePlaceholder" autocomplete="off" />
           <span id="askStatus" class="ask-status">ready</span>
         </label>
-        <button class="icon-button" id="openObsidian" title="Obsidian 열기">↗</button>
+        <button class="icon-button" id="openObsidian" title="Open Obsidian" data-i18n-title="openObsidian">↗</button>
       </div>
       <div id="graph"></div>
       <article class="note-pane" id="notePane">
-        <div class="caption">선택된 노트</div>
-        <h1 id="noteTitle">로딩 중</h1>
-        <p id="notePreview">vault를 읽고 있습니다.</p>
+        <div class="note-pane-top">
+          <div class="caption" id="noteMode" data-i18n="selectedNote">Selected Note</div>
+          <div class="note-top-actions">
+            <div class="note-degree" id="noteDegreeMini">0</div>
+            <button class="note-icon-button" id="moveNotePane" type="button" title="Move card" data-i18n-title="moveCard">⇄</button>
+            <button class="note-icon-button" id="closeNotePane" type="button" title="Hide card" data-i18n-title="hideCard">×</button>
+          </div>
+        </div>
+        <h1 id="noteTitle" data-i18n="loading">Loading</h1>
+        <div class="note-path" id="notePathMini">-</div>
+        <p id="notePreview" data-i18n="readingVault">Reading vault.</p>
         <div class="tag-row" id="noteTags"></div>
         <div class="note-actions">
-          <button id="openSelectedNote" class="mini-button">Obsidian에서 열기</button>
+          <button id="toggleContext" class="mini-button" data-i18n="context">Context</button>
+          <button id="openSelectedNote" class="mini-button" data-i18n="openInObsidian">Open in Obsidian</button>
         </div>
       </article>
       <div class="graph-hud" id="graphHud"></div>
     </main>
 
-    <aside class="rightbar">
+    <aside class="rightbar collapsed" id="rightbar">
       <div class="panel-head">
-        <div class="title">Graph Context</div>
-        <button class="icon-button" title="패널 접기">‹</button>
+        <div class="title" data-i18n="graphContext">Graph Context</div>
+        <button class="icon-button" id="closeContext" title="Collapse panel" data-i18n-title="collapsePanel">›</button>
       </div>
       <div class="right-content">
-        <div class="section-label">Selected Note</div>
-        <div class="property"><span>Path</span><strong id="selectedPath">-</strong></div>
-        <div class="property"><span>Degree</span><strong id="selectedDegree">-</strong></div>
-        <div class="section-label">Backlinks</div>
-        <div id="backlinks"></div>
-        <div class="section-label">Markdown Preview</div>
-        <pre id="markdownPreview"></pre>
+        <div class="section-label" data-i18n="selectedNote">Selected Note</div>
+        <div class="property"><span data-i18n="path">Path</span><strong id="selectedPath">-</strong></div>
+        <div class="property"><span data-i18n="degree">Degree</span><strong id="selectedDegree">-</strong></div>
+        <section id="healthQueueSection">
+          <div class="section-label" data-i18n="healthQueue">Health Queue</div>
+          <div id="healthList" class="note-list compact"></div>
+        </section>
+        <details class="foldout" open>
+          <summary data-i18n="backlinks">Backlinks</summary>
+          <div id="backlinks"></div>
+        </details>
+        <details class="foldout" open>
+          <summary data-i18n="outlinks">Outlinks</summary>
+          <div id="outlinks"></div>
+        </details>
+        <details class="foldout">
+          <summary data-i18n="markdownPreview">Markdown Preview</summary>
+          <pre id="markdownPreview"></pre>
+        </details>
       </div>
     </aside>
   </div>

@@ -2,8 +2,27 @@
   "name": "second-brain-ui",
   "version": "0.1.0",
   "private": false,
-  "description": "A local 3D graph and ask interface for Obsidian markdown vaults.",
+  "description": "A local-first graph, evidence search, and review UI for Obsidian markdown vaults.",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Youngkwon-Lee/second-brain-ui.git"
+  },
+  "keywords": [
+    "obsidian",
+    "markdown",
+    "markdown-notes",
+    "second-brain",
+    "personal-knowledge-management",
+    "pkm",
+    "zettelkasten",
+    "knowledge-graph",
+    "graph-visualization",
+    "local-first",
+    "local-search",
+    "privacy"
+  ],
   "bin": {
     "second-brain-ui": "./server.js"
   },
