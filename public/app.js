@@ -17,6 +17,10 @@ function initialNotePanePosition() {
   return localStorage.getItem("secondBrainNotePanePosition") === "left" ? "left" : "right";
 }
 
+function initialAutoRefreshEnabled() {
+  return localStorage.getItem("secondBrainAutoRefresh") !== "off";
+}
+
 const state = {
   graph: null,
   notes: [],
@@ -39,6 +43,11 @@ const state = {
   locale: initialLocale(),
   notePanePosition: initialNotePanePosition(),
   notePaneDismissed: false,
+  autoRefreshEnabled: initialAutoRefreshEnabled(),
+  autoRefreshTimer: null,
+  graphSignature: "",
+  knownNodeIds: null,
+  newNotesCount: 0,
   currentEmptyPreviewGroup: null,
   foldoutsInitialized: false
 };
@@ -48,6 +57,10 @@ const dictionaries = {
   en: {
     connecting: "Connecting vault",
     refresh: "Refresh",
+    autoRefresh: "Auto refresh",
+    autoOn: "Auto",
+    autoOff: "Manual",
+    newNotesCount: (count) => `${count} new`,
     searchPlaceholder: "Search notes, tags, links",
     overview: "Overview",
     notes: "Notes",
@@ -122,6 +135,10 @@ const dictionaries = {
   ko: {
     connecting: "vault 연결 중",
     refresh: "새로고침",
+    autoRefresh: "자동 새로고침",
+    autoOn: "자동",
+    autoOff: "수동",
+    newNotesCount: (count) => `새 ${count}`,
     searchPlaceholder: "노트, 태그, 링크 검색",
     overview: "개요",
     notes: "노트",
@@ -303,6 +320,7 @@ function applyLocale() {
   const askInput = document.getElementById("askInput");
   const askStatus = document.getElementById("askStatus");
   if (askInput && askStatus && askInput.value.trim().length < 2) askStatus.textContent = t("ready");
+  renderAutoRefreshState();
 }
 
 function setLocale(locale) {
@@ -336,6 +354,62 @@ function toggleNotePanePosition() {
   state.notePanePosition = state.notePanePosition === "left" ? "right" : "left";
   localStorage.setItem("secondBrainNotePanePosition", state.notePanePosition);
   applyNotePanePosition();
+}
+
+function renderAutoRefreshState() {
+  const toggle = document.getElementById("autoRefreshToggle");
+  if (!toggle) return;
+  toggle.classList.toggle("active", state.autoRefreshEnabled);
+  toggle.textContent = state.autoRefreshEnabled ? t("autoOn") : t("autoOff");
+}
+
+function setAutoRefresh(enabled) {
+  state.autoRefreshEnabled = Boolean(enabled);
+  localStorage.setItem("secondBrainAutoRefresh", state.autoRefreshEnabled ? "on" : "off");
+  renderAutoRefreshState();
+  scheduleAutoRefresh();
+}
+
+function scheduleAutoRefresh() {
+  if (state.autoRefreshTimer) {
+    clearInterval(state.autoRefreshTimer);
+    state.autoRefreshTimer = null;
+  }
+  if (!state.autoRefreshEnabled) return;
+  state.autoRefreshTimer = setInterval(() => {
+    refreshVault({ silent: true }).catch((error) => console.error(error));
+  }, 10000);
+}
+
+function renderNewNotesBadge() {
+  const badge = document.getElementById("newNotesBadge");
+  if (!badge) return;
+  badge.hidden = state.newNotesCount <= 0;
+  badge.textContent = t("newNotesCount", state.newNotesCount);
+}
+
+function detectNewNotes(graph) {
+  const ids = new Set((graph.nodes || []).map((node) => node.id));
+  if (!state.knownNodeIds) {
+    state.knownNodeIds = ids;
+    return 0;
+  }
+  let count = 0;
+  for (const id of ids) {
+    if (!state.knownNodeIds.has(id)) count += 1;
+  }
+  state.knownNodeIds = ids;
+  return count;
+}
+
+function graphSignature(graph) {
+  const stats = graph.stats || {};
+  return [
+    stats.notes || 0,
+    stats.edges || 0,
+    stats.unresolved || 0,
+    (graph.nodes || []).map((node) => node.id).sort().join("|")
+  ].join(":");
 }
 
 async function fetchJson(url) {
@@ -1254,19 +1328,46 @@ function refreshActivePreview() {
   }
 }
 
-async function load() {
+async function refreshVault({ silent = false } = {}) {
   if (!window.ForceGraph3D) {
     throw new Error("3d-force-graph 라이브러리를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.");
   }
-  state.graph = await fetchJson("/api/graph");
+  const previousSelectedId = state.selected?.id || null;
+  const graph = await fetchJson("/api/graph");
+  const nextGraphSignature = graphSignature(graph);
+  const graphChanged = nextGraphSignature !== state.graphSignature;
+  const added = detectNewNotes(graph);
+  if (silent && added > 0) {
+    state.newNotesCount += added;
+  }
+  state.graphSignature = nextGraphSignature;
+  state.graph = graph;
   state.health = await fetchJson("/api/health");
   state.candidates = await fetchJson("/api/candidates");
-  state.notes = await fetchJson("/api/notes");
-  installGraph(state.graph);
+  const searchQuery = document.getElementById("searchInput")?.value.trim() || "";
+  if (!state.evidenceMode) {
+    state.notes = await fetchJson(`/api/notes${searchQuery ? `?q=${encodeURIComponent(searchQuery)}` : ""}`);
+  }
+  if (!silent || graphChanged) {
+    installGraph(state.graph);
+  }
   renderSidebar();
   renderHealthList();
-  const first = state.graph.nodes.find((node) => node.path === "INDEX.md") || state.graph.nodes[0];
-  if (first) await selectNote(first.id);
+  renderNewNotesBadge();
+  if (previousSelectedId && state.graph.nodes.some((node) => node.id === previousSelectedId)) {
+    update3dFocusStyles();
+    return;
+  }
+  if (!silent) {
+    const first = state.graph.nodes.find((node) => node.path === "INDEX.md") || state.graph.nodes[0];
+    if (first) await selectNote(first.id);
+  }
+}
+
+async function load() {
+  state.newNotesCount = 0;
+  renderNewNotesBadge();
+  await refreshVault({ silent: false });
 }
 
 function escapeHtml(value) {
@@ -1282,6 +1383,8 @@ function escapeHtml(value) {
 let askTimer = null;
 applyLocale();
 applyNotePanePosition();
+renderNewNotesBadge();
+scheduleAutoRefresh();
 document.getElementById("searchInput").addEventListener("input", (event) => searchNotes(event.target.value));
 document.getElementById("searchInput").addEventListener("focus", () => {
   state.askMode = false;
@@ -1298,6 +1401,9 @@ document.getElementById("askInput").addEventListener("keydown", async (event) =>
   if (state.askResults[0]) selectNote(state.askResults[0].id);
 });
 document.getElementById("refresh").addEventListener("click", () => load());
+document.getElementById("autoRefreshToggle").addEventListener("click", () => {
+  setAutoRefresh(!state.autoRefreshEnabled);
+});
 document.getElementById("localeToggle").addEventListener("click", () => {
   setLocale(state.locale === "en" ? "ko" : "en");
 });
