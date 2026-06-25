@@ -1,4 +1,17 @@
 node_modules/
 .DS_Store
 .env
+.env.*
+!.env.example
 *.log
+*.pem
+*.key
+*.crt
+*.p12
+*.p8
+screenshots/
+captures/
+exports/
+vault/
+obsidian-vault/
+second-brain/

@@ -9,16 +9,31 @@ const publicDir = path.join(__dirname, "public");
 loadDotEnv(path.join(__dirname, ".env"));
 const defaultVault = path.join(process.env.HOME || process.cwd(), "Documents", "second-brain");
 const vaultRoot = path.resolve(process.env.OBSIDIAN_VAULT || defaultVault);
-const port = Number(process.env.PORT || 4177);
+const port = Number(process.env.PORT || 4178);
 
 const ignoredDirs = new Set([
   ".git",
   ".obsidian",
+  ".omo",
   ".trash",
   "node_modules",
   ".pytest_cache",
-  ".claude"
+  ".claude",
+  "_templates",
+  "operations/context-graph",
+  "operations/raw",
+  "operations/raw-handoff-digests",
+  "operations/lint-reports",
+  "operations/artifacts",
+  "operations/auto-apply-notes",
+  "_inbox/raw",
+  "_inboxraw"
 ]);
+
+const scanPolicy = {
+  excluded: [...ignoredDirs].sort(),
+  source: "canonical-review"
+};
 
 let cache = null;
 let cacheTime = 0;
@@ -49,10 +64,11 @@ async function walk(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
-    if (entry.name.startsWith(".") && ignoredDirs.has(entry.name)) continue;
     const fullPath = path.join(dir, entry.name);
+    const relativePath = path.relative(vaultRoot, fullPath).split(path.sep).join("/");
+    if (isIgnoredPath(relativePath)) continue;
     if (entry.isDirectory()) {
-      if (!ignoredDirs.has(entry.name)) files.push(...await walk(fullPath));
+      files.push(...await walk(fullPath));
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       files.push(fullPath);
     }
@@ -60,10 +76,31 @@ async function walk(dir) {
   return files;
 }
 
+function isIgnoredPath(relativePath) {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/\/$/, "");
+  if (!normalized) return false;
+  const parts = normalized.split("/");
+  if (ignoredDirs.has(parts[0])) return true;
+  return [...ignoredDirs].some((ignored) => normalized === ignored || normalized.startsWith(`${ignored}/`));
+}
+
 function stripFrontmatter(text) {
   if (!text.startsWith("---")) return text;
   const end = text.indexOf("\n---", 3);
   return end === -1 ? text : text.slice(end + 4);
+}
+
+function frontmatterBounds(text) {
+  if (!text.startsWith("---")) return null;
+  const end = text.indexOf("\n---", 3);
+  if (end === -1) return null;
+  const closeEnd = text.indexOf("\n", end + 4);
+  return {
+    start: 0,
+    bodyStart: 3,
+    bodyEnd: end,
+    end: closeEnd === -1 ? text.length : closeEnd + 1
+  };
 }
 
 function extractFrontmatter(text) {
@@ -93,6 +130,29 @@ function parseFrontmatterValue(value) {
   if (unquoted === "true") return true;
   if (unquoted === "false") return false;
   return unquoted;
+}
+
+function serializeFrontmatterValue(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  const stringValue = String(value ?? "");
+  return /[:#\[\]{},"']/.test(stringValue) ? JSON.stringify(stringValue) : stringValue;
+}
+
+function upsertFrontmatter(text, updates) {
+  const bounds = frontmatterBounds(text);
+  const current = bounds ? extractFrontmatter(text) : {};
+  const next = { ...current, ...updates };
+  const lines = Object.entries(next).map(([key, value]) => {
+    const serialized = serializeFrontmatterValue(value);
+    if (Array.isArray(serialized)) {
+      return [ `${key}:`, ...serialized.map((item) => `  - ${serializeFrontmatterValue(item)}`) ].join("\n");
+    }
+    return `${key}: ${serialized}`;
+  });
+  const block = `---\n${lines.join("\n")}\n---\n`;
+  if (!bounds) return `${block}\n${text.replace(/^\s+/, "")}`;
+  return `${block}${text.slice(bounds.end)}`;
 }
 
 function titleFromMarkdown(text, relativePath) {
@@ -173,6 +233,7 @@ async function buildVault() {
       tags: extractTags(raw),
       kind: frontmatter.kind || "",
       status: frontmatter.status || frontmatter.canonical_status || "",
+      reviewDecision: frontmatter.review_decision || "",
       layer: frontmatter.layer || "",
       perspective: frontmatter.perspective === true || frontmatter.perspective === "true",
       links: [...extractWikiLinks(raw), ...extractMarkdownLinks(raw)],
@@ -211,6 +272,7 @@ async function buildVault() {
     tags: note.tags,
     kind: note.kind,
     status: note.status,
+    reviewDecision: note.reviewDecision,
     layer: note.layer,
     perspective: note.perspective,
     updatedAt: note.updatedAt,
@@ -225,10 +287,12 @@ async function buildVault() {
       tags: note.tags,
       kind: note.kind,
       status: note.status,
+      reviewDecision: note.reviewDecision,
       layer: note.layer,
       perspective: note.perspective,
       group: (note.path || note.id).split("/")[0] || "root",
       degree: degreeById.get(note.id) || 0,
+      updatedAt: note.updatedAt,
       heading: chunk.heading,
       text: chunk.text,
       snippet: chunk.snippet
@@ -242,8 +306,10 @@ async function buildVault() {
       notes: notes.length,
       edges: edges.length,
       tags: tagCounts.size,
-      unresolved: unresolved.size
+      unresolved: unresolved.size,
+      excludedRules: scanPolicy.excluded.length
     },
+    scanPolicy,
     nodes,
     edges,
     tags: [...tagCounts.entries()]
@@ -256,6 +322,88 @@ async function buildVault() {
       .map(({ content, ...note }) => note)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   };
+}
+
+async function readHealthReport() {
+  const filePath = path.join(vaultRoot, "operations", "context-graph", "health.json");
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const report = JSON.parse(raw);
+    return {
+      available: true,
+      path: path.relative(vaultRoot, filePath),
+      stats: report.stats || {},
+      topHubs: (report.top_hubs || []).slice(0, 8),
+      isolated: (report.isolated || []).slice(0, 12),
+      missingFrontmatter: (report.missing_frontmatter || []).slice(0, 12),
+      candidatePromotions: (report.candidate_promotions || []).slice(0, 12),
+      routerLeaf: (report.router_leaf || []).slice(0, 12),
+      rawLikeCount: (report.raw_like || []).length,
+      artifactLikeCount: (report.artifact_like || []).length
+    };
+  } catch (error) {
+    return {
+      available: false,
+      path: path.relative(vaultRoot, filePath),
+      error: error.message
+    };
+  }
+}
+
+function candidatePriority(note) {
+  const text = `${note.title} ${note.preview} ${note.path} ${note.content || ""}`.toLowerCase();
+  let score = 0;
+  if (["candidates/README.md", "candidates/RULES_v1.md", "candidates/catalog.md"].includes(note.path)) return 0;
+  if (note.path === "candidates/inbox.md") {
+    return text.includes("pending candidate 없음") ? 0 : 20;
+  }
+  if (["keep", "promote", "archive"].includes(note.reviewDecision)) return 0;
+  if (["keep", "discard", "promoted"].includes(note.status)) return 0;
+  if (note.status === "review") score += 12;
+  if (note.status === "pending" || note.status === "candidate") score += 10;
+  score += Math.min(6, (note.degree || 0) / 2);
+  return score;
+}
+
+function candidateQueue(vault) {
+  const notes = vault.fullNotes
+    .filter((note) => note.path.startsWith("candidates/"))
+    .map((note) => ({
+      ...stripNoteContent(note),
+      reviewScore: candidatePriority(note),
+      actionHint: candidateActionHint(note)
+    }))
+    .sort((a, b) => b.reviewScore - a.reviewScore || b.updatedAt - a.updatedAt);
+  const readyNotes = notes.filter((note) => note.reviewScore >= 12);
+  const archiveNotes = notes.filter((note) => note.reviewScore < 12);
+  return {
+    total: notes.length,
+    reviewReady: readyNotes.length,
+    readyNotes: readyNotes.slice(0, 80),
+    archiveNotes: archiveNotes.slice(0, 80),
+    notes: notes.slice(0, 80)
+  };
+}
+
+function candidateActionHint(note) {
+  const text = `${note.title} ${note.preview} ${note.content || ""}`.toLowerCase();
+  if (["candidates/README.md", "candidates/RULES_v1.md", "candidates/catalog.md"].includes(note.path)) return "reference";
+  if (note.path === "candidates/inbox.md" && text.includes("pending candidate 없음")) return "empty";
+  if (note.reviewDecision === "keep") return "kept";
+  if (note.reviewDecision === "promote") return "promotion requested";
+  if (note.reviewDecision === "archive") return "archived";
+  if (note.status === "keep") return "kept";
+  if (note.status === "discard") return "discarded";
+  if (note.status === "promoted") return "promoted";
+  if (text.includes("promote") || text.includes("승격")) return "review for promotion";
+  if (text.includes("discard") || text.includes("폐기")) return "check discard";
+  if (note.status === "review") return "review";
+  return "triage";
+}
+
+function stripNoteContent(note) {
+  const { content, ...rest } = note;
+  return rest;
 }
 
 async function getVault() {
@@ -282,12 +430,93 @@ function sendError(res, status, message) {
   res.end(JSON.stringify({ error: message }));
 }
 
+async function readJsonBody(req) {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 10000) throw new Error("Request body too large");
+  }
+  return body ? JSON.parse(body) : {};
+}
+
+function candidateActionPatch(action) {
+  const reviewedAt = new Date().toISOString();
+  if (action === "keep") {
+    return { status: "keep", review_decision: "keep", reviewed_at: reviewedAt };
+  }
+  if (action === "promote") {
+    return { status: "review", review_decision: "promote", reviewed_at: reviewedAt };
+  }
+  if (action === "archive") {
+    return { status: "discard", review_decision: "archive", reviewed_at: reviewedAt };
+  }
+  return null;
+}
+
+async function updateCandidateReview({ id, action }) {
+  const patch = candidateActionPatch(action);
+  if (!patch) {
+    const error = new Error("Invalid candidate action");
+    error.status = 400;
+    throw error;
+  }
+  const relativePath = `${String(id || "").replace(/\.md$/, "")}.md`;
+  if (!relativePath.startsWith("candidates/")) {
+    const error = new Error("Candidate action only supports candidates/");
+    error.status = 400;
+    throw error;
+  }
+  const fullPath = path.normalize(path.join(vaultRoot, relativePath));
+  if (!fullPath.startsWith(vaultRoot)) {
+    const error = new Error("Invalid candidate path");
+    error.status = 400;
+    throw error;
+  }
+  const current = await fs.readFile(fullPath, "utf8");
+  await fs.writeFile(fullPath, upsertFrontmatter(current, patch), "utf8");
+  cache = null;
+  cacheTime = 0;
+  return {
+    ok: true,
+    id: relativePath.replace(/\.md$/, ""),
+    path: relativePath,
+    action,
+    patch
+  };
+}
+
 function tokenizeQuery(query) {
-  return query
+  const tokens = query
     .toLowerCase()
     .split(/[^a-z0-9가-힣_/-]+/i)
     .map((token) => token.trim())
     .filter((token) => token.length > 1);
+  return [...new Set(tokens.flatMap((token) => [token, ...expandedQueryTokens(token)]))];
+}
+
+function expandedQueryTokens(token) {
+  const synonyms = {
+    "옵시디언": ["obsidian"],
+    "트렌드": ["trend", "trends"],
+    "위키": ["wiki"],
+    "세컨드": ["second"],
+    "브레인": ["brain"],
+    "후보": ["candidate"],
+    "승격": ["promotion", "promote"],
+    "근거": ["evidence", "source"],
+    obsidian: ["옵시디언"],
+    trend: ["트렌드"],
+    trends: ["트렌드"],
+    wiki: ["위키"],
+    second: ["세컨드"],
+    brain: ["브레인"],
+    candidate: ["후보"],
+    promotion: ["승격"],
+    promote: ["승격"],
+    evidence: ["근거"],
+    source: ["근거"]
+  };
+  return synonyms[token] || [];
 }
 
 function askVault(vault, query) {
@@ -296,7 +525,10 @@ function askVault(vault, query) {
 
   const chunkMatches = [];
   for (const chunk of vault.searchChunks || []) {
-    const score = scoreChunk(chunk, chunk, tokens, query) + Math.min(4, (chunk.degree || 0) / 10);
+    const scored = scoreChunk(chunk, chunk, tokens, query);
+    if (scored.score <= 0) continue;
+    const graphBoost = Math.min(4, (chunk.degree || 0) / 10);
+    const score = scored.score + graphBoost + authorityBoost(chunk) + recencyBoost(chunk.updatedAt);
     if (score <= 0) continue;
     chunkMatches.push({
       id: chunk.id,
@@ -308,7 +540,9 @@ function askVault(vault, query) {
       tags: chunk.tags,
       degree: chunk.degree,
       group: chunk.group,
-      score
+      score: Math.round(score * 10) / 10,
+      matchReasons: scored.reasons,
+      matchedTerms: scored.matchedTerms
     });
   }
 
@@ -321,7 +555,7 @@ function askVault(vault, query) {
     total: results.length,
     answer: results.length
       ? buildVaultAnswer(query, results)
-      : "관련 노트를 찾지 못했습니다.",
+      : "관련 근거 노트를 찾지 못했습니다.",
     results
 };
 }
@@ -337,7 +571,7 @@ function buildVaultAnswer(query, results) {
     .join("\n");
 
   const groups = [...new Set(sources.map((note) => note.group).filter(Boolean))].slice(0, 4).join(", ");
-  return `"${query}"에 대한 vault 기반 답변입니다.\n\n핵심 근거는 ${sources[0].title}에서 가장 강하게 잡히고, 관련 맥락은 ${groups || "vault"} 영역에 걸쳐 있습니다. 아래 source 조각들이 현재 답변의 근거입니다.\n\n${sourceLines}`;
+  return `"${query}"에 대한 local markdown 근거 검색 결과입니다.\n\n가장 강한 근거는 ${sources[0].title}에서 잡히고, 관련 맥락은 ${groups || "vault"} 영역에 걸쳐 있습니다. 아래 source 조각들은 생성 답변이 아니라 검색 근거입니다.\n\n${sourceLines}`;
 }
 
 function chunksForNote(note) {
@@ -388,15 +622,56 @@ function scoreChunk(note, chunk, tokens, query) {
   const text = chunk.text.toLowerCase();
   const heading = (chunk.heading || "").toLowerCase();
   const phrase = query.toLowerCase().trim();
-  let score = phrase.length > 2 && text.includes(phrase) ? 12 : 0;
-  for (const token of tokens) {
-    if (title.includes(token)) score += 8;
-    if (heading.includes(token)) score += 5;
-    if (pathText.includes(token)) score += 4;
-    if (tags.some((tag) => tag.includes(token))) score += 4;
-    score += Math.min(10, occurrenceCount(text, token) * 2);
+  let score = 0;
+  const reasons = [];
+  const matchedTerms = new Set();
+
+  function add(points, reason, token = "") {
+    score += points;
+    if (!reasons.includes(reason)) reasons.push(reason);
+    if (token) matchedTerms.add(token);
   }
-  return score;
+
+  if (phrase.length > 2) {
+    if (title.includes(phrase)) add(24, "exact title", phrase);
+    if (heading.includes(phrase)) add(18, "exact heading", phrase);
+    if (text.includes(phrase)) add(14, "exact text", phrase);
+    if (pathText.includes(phrase)) add(10, "exact path", phrase);
+  }
+
+  for (const token of tokens) {
+    if (title.includes(token)) add(10, "title", token);
+    if (heading.includes(token)) add(7, "heading", token);
+    if (pathText.includes(token)) add(5, "path", token);
+    if (tags.some((tag) => tag.includes(token))) add(7, "tag", token);
+    const occurrences = occurrenceCount(text, token);
+    if (occurrences) add(Math.min(12, occurrences * 2), "body", token);
+  }
+
+  return {
+    score,
+    reasons: reasons.slice(0, 5),
+    matchedTerms: [...matchedTerms].slice(0, 8)
+  };
+}
+
+function authorityBoost(note) {
+  let boost = 0;
+  if (note.status === "canonical") boost += 4;
+  if (String(note.status || "").includes("canonical")) boost += 3;
+  if (note.perspective) boost += 3;
+  if (["principle", "thesis", "self-model", "strategy", "research-axis", "decision-pattern", "business-priority"].includes(note.kind)) boost += 3;
+  if (["personal", "company", "research"].includes(note.group)) boost += 1.5;
+  if (["candidates", "_inbox"].includes(note.group)) boost -= 4;
+  return boost;
+}
+
+function recencyBoost(updatedAt) {
+  if (!updatedAt) return 0;
+  const ageDays = (Date.now() - updatedAt) / 86400000;
+  if (ageDays < 14) return 2;
+  if (ageDays < 60) return 1;
+  return 0;
 }
 
 function occurrenceCount(text, token) {
@@ -415,7 +690,7 @@ function dedupeChunkMatches(matches) {
   const sorted = matches.sort((a, b) => b.score - a.score);
   const results = [];
   for (const match of sorted) {
-    const key = `${match.id}:${match.heading}`;
+    const key = match.id;
     if (seen.has(key)) continue;
     seen.add(key);
     results.push(match);
@@ -424,6 +699,11 @@ function dedupeChunkMatches(matches) {
 }
 
 async function serveStatic(res, pathname) {
+  if (pathname === "/favicon.ico") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   const requested = pathname === "/" ? "/index.html" : pathname;
   const fullPath = path.normalize(path.join(publicDir, requested));
   if (!fullPath.startsWith(publicDir)) return sendError(res, 403, "Forbidden");
@@ -445,16 +725,38 @@ async function serveStatic(res, pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-headers": "content-type"
+      });
+      res.end();
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/candidate-action") {
+      const body = await readJsonBody(req);
+      return sendJson(res, await updateCandidateReview(body));
+    }
+    if (req.method !== "GET") return sendError(res, 405, "Method not allowed");
     if (url.pathname === "/api/graph") {
       const vault = await getVault();
       return sendJson(res, {
         vaultRoot: vault.vaultRoot,
         generatedAt: vault.generatedAt,
         stats: vault.stats,
+        scanPolicy: vault.scanPolicy,
         nodes: vault.nodes,
         edges: vault.edges,
         tags: vault.tags
       });
+    }
+    if (url.pathname === "/api/health") {
+      return sendJson(res, await readHealthReport());
+    }
+    if (url.pathname === "/api/candidates") {
+      const vault = await getVault();
+      return sendJson(res, candidateQueue(vault));
     }
     if (url.pathname === "/api/notes") {
       const vault = await getVault();
@@ -471,6 +773,12 @@ const server = http.createServer(async (req, res) => {
       const query = url.searchParams.get("q") || "";
       return sendJson(res, askVault(vault, query));
     }
+    if (url.pathname === "/api/open") {
+      const target = url.searchParams.get("path") || "";
+      const fullPath = target ? path.resolve(vaultRoot, target) : vaultRoot;
+      if (!fullPath.startsWith(vaultRoot)) return sendError(res, 400, "Invalid path");
+      return sendJson(res, { url: `obsidian://open?path=${encodeURIComponent(fullPath)}` });
+    }
     if (url.pathname === "/api/note") {
       const vault = await getVault();
       const id = url.searchParams.get("id");
@@ -485,7 +793,12 @@ const server = http.createServer(async (req, res) => {
         .map((edge) => vault.nodes.find((node) => node.id === edge.source))
         .filter(Boolean)
         .slice(0, 20);
-      return sendJson(res, { ...note, content, backlinks });
+      const outlinks = vault.edges
+        .filter((edge) => edge.source === id)
+        .map((edge) => vault.nodes.find((node) => node.id === edge.target))
+        .filter(Boolean)
+        .slice(0, 20);
+      return sendJson(res, { ...note, content, backlinks, outlinks });
     }
     return serveStatic(res, url.pathname);
   } catch (error) {

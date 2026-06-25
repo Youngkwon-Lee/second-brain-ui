@@ -1,37 +1,41 @@
 # Second Brain UI
 
-A local web UI for visualizing an Obsidian markdown vault as a living 3D graph.
+A local control panel for an Obsidian-style markdown second brain.
 
-It reads markdown files directly from a local vault folder. Your notes are not copied into this repository.
+It reads markdown files directly from a local vault folder. Notes are not copied into this repository, and no hosted AI API is called by default.
 
 ## Features
 
-- 3D force graph for `[[wiki links]]` and markdown `.md` links
-- Obsidian-style dark interface
-- Folder/group filters
-- Tags, backlinks, previews, and note details
-- Local "Ask your vault" interface backed by markdown search and source notes
-- Opens the configured vault in Obsidian
+- 3D graph for `[[wiki links]]` and markdown `.md` links
+- Evidence Search over local markdown chunks with source notes, scores, match reasons, and matched terms
+- `Full / 1-hop / 2-hop` graph modes around the selected note
+- Backlinks, outlinks, markdown preview, note path, and degree context
+- Candidate Queue with safe `Keep / Promote / Archive` review actions
+- Brain Health summary from `operations/context-graph/health.json` when available
+- EN/KO UI toggle with local preference storage
+- Optional auto refresh with a new-note badge for continuously updated vaults
+- Movable and hideable selected-note card
+- Obsidian URL handoff for the vault or selected note
 
 ## Run
 
 ```bash
-npm start
+OBSIDIAN_VAULT="/path/to/your/vault" PORT=4178 npm start
 ```
 
-By default the app looks for:
+Then open:
+
+```bash
+http://localhost:4178
+```
+
+If `OBSIDIAN_VAULT` is omitted, the app looks for:
 
 ```bash
 $HOME/Documents/second-brain
 ```
 
-To use another Obsidian vault:
-
-```bash
-OBSIDIAN_VAULT="/path/to/your/vault" npm start
-```
-
-Or create a local `.env` file:
+You can also create a local `.env` file:
 
 ```bash
 cp .env.example .env
@@ -41,38 +45,86 @@ Then edit:
 
 ```bash
 OBSIDIAN_VAULT=/path/to/your/obsidian-vault
-PORT=4177
+PORT=4178
 ```
 
-Then open:
+## Connect an Obsidian Vault
+
+Second Brain UI does not require an Obsidian plugin.
+
+It connects by reading the local vault folder that already contains your `.md` files.
+
+1. Open Obsidian.
+2. Find the vault folder on your computer.
+3. Start this app with that folder as `OBSIDIAN_VAULT`.
+4. Open `http://localhost:4178`.
+
+Example:
 
 ```bash
-http://localhost:4177
+OBSIDIAN_VAULT="/path/to/your/obsidian-vault" PORT=4178 npm start
 ```
+
+The app can open notes back in Obsidian through `obsidian://` links when the Obsidian desktop app is installed.
+
+Candidate review actions edit local markdown frontmatter in your vault. They do not upload notes and do not move files into canonical folders.
+
+## Continuous Notes
+
+Auto refresh is off by default. When you turn it on, the browser checks the local vault API about every 10 seconds. New markdown files added in Obsidian or by another local workflow appear in the graph and note list without restarting the app.
+
+The header shows a small new-note badge when fresh files are detected. Use the Auto/Manual toggle if you want to pause background refresh while inspecting a graph view.
+
+## Workflow
+
+1. Search for evidence in the top bar.
+2. Pick a result from Recent Notes or the graph.
+3. Use `1-hop` or `2-hop` to inspect local context around the selected note.
+4. Open the Context panel for backlinks, outlinks, and markdown preview.
+5. Review `candidates/` items with `Keep / Promote / Archive`.
+
+Candidate actions only update frontmatter:
+
+- `Keep`: `status: keep`, `review_decision: keep`
+- `Promote`: `status: review`, `review_decision: promote`
+- `Archive`: `status: discard`, `review_decision: archive`
+
+They do not move or merge notes into canonical folders.
 
 ## CLI
 
-After cloning locally, you can also link the command:
+After cloning locally, you can link the command:
 
 ```bash
 npm link
-OBSIDIAN_VAULT="/path/to/your/vault" second-brain-ui
+OBSIDIAN_VAULT="/path/to/your/vault" PORT=4178 second-brain-ui
 ```
 
 ## How It Works
 
-Second Brain UI scans local `.md` files, extracts note titles, tags, wiki links, markdown links, backlinks, and top-level folders, then builds a browser-based 3D graph.
+Second Brain UI scans local `.md` files, extracts note titles, frontmatter, tags, wiki links, markdown links, backlinks, outlinks, and top-level folders, then builds a browser-based graph.
 
-The Ask interface uses local retrieval over markdown body chunks. It returns a short vault-grounded answer with source notes and excerpts. No hosted AI API is called by default.
+Evidence Search scores local markdown chunks by exact phrase, title, section heading, path, tag, body occurrence, graph degree, recency, and canonical/perspective hints. It returns source notes and excerpts instead of calling a hosted model.
+
+The graph scan intentionally excludes local implementation artifacts such as `.obsidian`, `.omo`, templates, raw handoffs, lint reports, and generated context-graph outputs.
 
 ## Privacy
 
-This repository should contain only the app code. Do not commit your Obsidian vault, `.env`, screenshots with private note titles, or exported personal data.
+This repository should contain only the app code. Do not commit your Obsidian vault, `.env`, screenshots with private note titles, exported personal data, API keys, tokens, or local machine paths.
 
 `.env` is ignored by git so each user can keep their local vault path private.
 
-## Notes
+Before publishing a fork or screenshot, check for:
 
-- This is a local-first tool. It does not upload your vault.
-- The `Ask your vault` feature is local markdown retrieval-augmented generation. It searches note body chunks and shows source notes, but it does not call hosted AI by default.
-- The app code is safe to publish, but your Obsidian vault should stay private unless you intentionally publish it.
+- private note titles, folder names, or filenames
+- absolute local machine paths
+- `.env` values
+- generated exports, screenshots, or logs
+- tokens, API keys, or credentials
+
+## Checks
+
+```bash
+node --check server.js
+node --check public/app.js
+```
