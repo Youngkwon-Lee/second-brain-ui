@@ -18,7 +18,7 @@ function initialNotePanePosition() {
 }
 
 function initialAutoRefreshEnabled() {
-  return localStorage.getItem("secondBrainAutoRefresh") !== "off";
+  return localStorage.getItem("secondBrainAutoRefresh") === "on";
 }
 
 const state = {

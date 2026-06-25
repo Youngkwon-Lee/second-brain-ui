@@ -13,7 +13,7 @@ It reads markdown files directly from a local vault folder. Notes are not copied
 - Candidate Queue with safe `Keep / Promote / Archive` review actions
 - Brain Health summary from `operations/context-graph/health.json` when available
 - EN/KO UI toggle with local preference storage
-- Auto refresh with a new-note badge for continuously updated vaults
+- Optional auto refresh with a new-note badge for continuously updated vaults
 - Movable and hideable selected-note card
 - Obsidian URL handoff for the vault or selected note
 
@@ -71,7 +71,7 @@ Candidate review actions edit local markdown frontmatter in your vault. They do 
 
 ## Continuous Notes
 
-When Auto refresh is on, the browser checks the local vault API about every 10 seconds. New markdown files added in Obsidian or by another local workflow appear in the graph and note list without restarting the app.
+Auto refresh is off by default. When you turn it on, the browser checks the local vault API about every 10 seconds. New markdown files added in Obsidian or by another local workflow appear in the graph and note list without restarting the app.
 
 The header shows a small new-note badge when fresh files are detected. Use the Auto/Manual toggle if you want to pause background refresh while inspecting a graph view.
 
