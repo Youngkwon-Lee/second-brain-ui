@@ -27,6 +27,8 @@
     "second-brain-ui": "./server.js"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "infisical run --env=dev --path=/second-brain-ui -- npm run start:local",
+    "start:local": "node server.js",
+    "start:secrets": "npm run start"
   }
 }
