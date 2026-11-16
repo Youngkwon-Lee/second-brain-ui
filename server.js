@@ -808,6 +808,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Obsidian vault app: http://localhost:${port}`);
+  console.log(`Obsidian vault app: http://second-brain.localhost:${port}`);
   console.log(`Vault: ${vaultRoot}`);
 });
